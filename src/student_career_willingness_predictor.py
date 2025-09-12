@@ -1,233 +1,379 @@
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.svm import SVC
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
-from sklearn.utils.class_weight import compute_class_weight
-import joblib
-import warnings
+from __future__ import annotations
 
-warnings.filterwarnings('ignore')
+from typing import Any
+
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error
+from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+
+from .data_pipeline import (
+    DEFAULT_FEATURE_VALUES,
+    DOMAIN_COLUMNS,
+    MODEL_FEATURES,
+    TARGET_COLUMN,
+    normalize_input_frame,
+    prepare_training_dataset,
+)
 
 
 class StudentCareerWillingnessPredictor:
-    def __init__(self):
-        self.model = None
+    def __init__(self) -> None:
+        self.model: Any | None = None
         self.scaler = StandardScaler()
-        self.feature_columns = None
-        self.model_name = None
+        self.feature_columns: list[str] = MODEL_FEATURES.copy()
+        self.model_name: str | None = None
+        self.model_type: str = "raw"
+        self.residual_std: float = 8.0
+        self.cv_results: dict[str, dict[str, float]] = {}
+        self.training_reference: pd.DataFrame | None = None
+        self.dataset_counts: dict[str, int] = {}
+        self.used_files: list[str] = []
 
-    def load_and_preprocess_data(self, file_path='data/Student Attitude and Behavior.csv'):
-        """Load and preprocess the student data"""
-        df = pd.read_csv(file_path)
-
-        # Drop unnecessary columns
-        drop_columns = ['Gender', 'Department', 'Height(CM)', 'Weight(KG)',
-                        'hobbies', 'salary expectation', 'social medai & video',
-                        'Financial Status', 'prefer to study in']
-        df = df.drop(drop_columns, axis=1)
-        df = df.dropna(axis=0)
-
-        # Encode categorical variables
-        # Yes/No columns
-        binary_cols = ['Certification Course', 'Do you like your degree?', 'part-time job']
-        for col in binary_cols:
-            df[col] = df[col].map({'No': 0, 'Yes': 1})
-
-        # Daily studying time
-        study_time_mapping = {
-            '0 - 30 minute': 0, '30 - 60 minute': 1, '1 - 2 Hour': 2,
-            '2 - 3 hour': 3, '3 - 4 hour': 4, 'More Than 4 hour': 5
+    def _build_candidate_models(self) -> dict[str, tuple[Any, str]]:
+        models: dict[str, tuple[Any, str]] = {
+            "Random Forest": (
+                RandomForestRegressor(
+                    n_estimators=300,
+                    max_depth=12,
+                    min_samples_leaf=2,
+                    random_state=42,
+                ),
+                "raw",
+            ),
+            "Gradient Boosting": (
+                GradientBoostingRegressor(n_estimators=250, learning_rate=0.06, random_state=42),
+                "raw",
+            ),
+            "SVR": (SVR(kernel="rbf", C=5.0, gamma="scale"), "scaled"),
+            "Linear Regression": (LinearRegression(), "scaled"),
         }
-        df['daily studing time'] = df['daily studing time'].map(study_time_mapping)
 
-        # Travelling time
-        travel_mapping = {
-            '0 - 30 minutes': 0, '30 - 60 minutes': 1, '1 - 1.30 hour': 2,
-            '1.30 - 2 hour': 3, '2 - 2.30 hour': 4, '2.30 - 3 hour': 5,
-            'more than 3 hour': 6
-        }
-        df['Travelling Time '] = df['Travelling Time '].map(travel_mapping)
+        try:
+            from xgboost import XGBRegressor
 
-        # Stress level
-        stress_mapping = {'Bad': 0, 'Awful': 1, 'Good': 2, 'fabulous': 3}
-        df['Stress Level '] = df['Stress Level '].map(stress_mapping)
+            models["XGBoost"] = (
+                XGBRegressor(
+                    n_estimators=250,
+                    learning_rate=0.06,
+                    max_depth=6,
+                    subsample=0.9,
+                    colsample_bytree=0.9,
+                    reg_lambda=1.0,
+                    random_state=42,
+                    objective="reg:squarederror",
+                ),
+                "raw",
+            )
+        except Exception:
+            pass
 
-        # Clean target variable
-        df['willingness to pursue a career based on their degree  '] = (
-            df['willingness to pursue a career based on their degree  ']
-            .str.replace('%', '').astype(float)
+        try:
+            from lightgbm import LGBMRegressor
+
+            models["LightGBM"] = (
+                LGBMRegressor(
+                    n_estimators=300,
+                    learning_rate=0.06,
+                    num_leaves=31,
+                    random_state=42,
+                    verbose=-1,
+                ),
+                "raw",
+            )
+        except Exception:
+            pass
+
+        return models
+
+    def train(self, file_path: str = "data/Student Attitude and Behavior.csv", data_dir: str = "data") -> Any:
+        pipeline = prepare_training_dataset(base_dataset_path=file_path, data_dir=data_dir)
+        df = pipeline.data
+
+        self.dataset_counts = pipeline.dataset_counts
+        self.used_files = pipeline.used_files
+        X = df[MODEL_FEATURES].copy()
+        y = df[TARGET_COLUMN].astype(float).values
+        self.feature_columns = MODEL_FEATURES.copy()
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X,
+            y,
+            test_size=0.25,
+            random_state=42,
         )
+        self.scaler.fit(X_train)
+        X_train_scaled = pd.DataFrame(self.scaler.transform(X_train), columns=self.feature_columns)
+        X_test_scaled = pd.DataFrame(self.scaler.transform(X_test), columns=self.feature_columns)
 
-        return df
-
-    def train_multiple_models(self, X_train, y_train, X_test, y_test):
-        """Train multiple models and select the best one"""
-
-        # Scale features
-        X_train_scaled = self.scaler.fit_transform(X_train)
-        X_test_scaled = self.scaler.transform(X_test)
-
-        models = {
-            'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
-            'Gradient Boosting': GradientBoostingClassifier(n_estimators=100, random_state=42),
-            'SVM': SVC(kernel='rbf', random_state=42),
-            'Logistic Regression': LogisticRegression(random_state=42, max_iter=1000)
-        }
-
-        best_score = 0
         best_model = None
         best_name = None
-        results = {}
+        best_mode = None
+        best_mae = float("inf")
 
-        for name, model in models.items():
-            # Use scaled data for SVM and Logistic Regression
-            if name in ['SVM', 'Logistic Regression']:
-                X_tr, X_te = X_train_scaled, X_test_scaled
-            else:
-                X_tr, X_te = X_train, X_test
+        for model_name, (model, mode) in self._build_candidate_models().items():
+            train_matrix = X_train_scaled if mode == "scaled" else X_train
+            test_matrix = X_test_scaled if mode == "scaled" else X_test
 
-            # Train model
-            model.fit(X_tr, y_train)
+            model.fit(train_matrix, y_train)
+            pred = model.predict(test_matrix)
+            mae = float(mean_absolute_error(y_test, pred))
 
-            # Cross-validation score
-            cv_scores = cross_val_score(model, X_tr, y_train, cv=5, scoring='accuracy')
-
-            # Test score
-            test_score = model.score(X_te, y_test)
-
-            results[name] = {
-                'cv_mean': cv_scores.mean(),
-                'cv_std': cv_scores.std(),
-                'test_score': test_score,
-                'model': model
+            cv_scores = cross_val_score(
+                model,
+                train_matrix,
+                y_train,
+                cv=5,
+                scoring="neg_mean_absolute_error",
+                n_jobs=-1,
+            )
+            self.cv_results[model_name] = {
+                "cv_mae": float(np.abs(cv_scores.mean())),
+                "cv_std": float(cv_scores.std()),
+                "test_mae": mae,
             }
 
-            # Update best model
-            if test_score > best_score:
-                best_score = test_score
+            if mae < best_mae:
+                best_mae = mae
                 best_model = model
-                best_name = name
+                best_name = model_name
+                best_mode = mode
 
-        return best_model, best_name, results
+        self.model = best_model
+        self.model_name = best_name
+        self.model_type = best_mode or "raw"
 
-    def optimize_best_model(self, X_train, y_train, model_name):
-        """Optimize hyperparameters for the best model"""
+        self.training_reference = X_train.head(min(120, len(X_train))).reset_index(drop=True)
+        if self.model_type == "scaled":
+            self.training_reference = pd.DataFrame(
+                self.scaler.transform(self.training_reference), columns=self.feature_columns
+            )
 
-        if model_name == 'Random Forest':
-            X_tr = X_train
-            param_grid = {
-                'n_estimators': [100, 200],
-                'max_depth': [10, 20, None],
-                'min_samples_split': [2, 5],
-                'min_samples_leaf': [1, 2]
-            }
-            base_model = RandomForestClassifier(random_state=42)
-
-        elif model_name == 'Gradient Boosting':
-            X_tr = X_train
-            param_grid = {
-                'n_estimators': [100, 200],
-                'learning_rate': [0.05, 0.1, 0.15],
-                'max_depth': [3, 5, 7]
-            }
-            base_model = GradientBoostingClassifier(random_state=42)
-
-        elif model_name == 'SVM':
-            X_tr = self.scaler.transform(X_train)
-            param_grid = {
-                'C': [0.1, 1, 10],
-                'gamma': ['scale', 'auto', 0.01, 0.1]
-            }
-            base_model = SVC(kernel='rbf', random_state=42)
-
-        elif model_name == 'Logistic Regression':
-            X_tr = self.scaler.transform(X_train)
-            param_grid = {
-                'C': [0.01, 0.1, 1, 10],
-                'penalty': ['l1', 'l2']
-            }
-            base_model = LogisticRegression(random_state=42, max_iter=1000, solver='liblinear')
-
-        grid_search = GridSearchCV(base_model, param_grid, cv=5, scoring='accuracy', n_jobs=-1)
-        grid_search.fit(X_tr, y_train)
-
-        return grid_search.best_estimator_
-
-    def train(self, file_path='data/Student Attitude and Behavior.csv'):
-        """Complete training pipeline"""
-        # Load and preprocess data
-        df = self.load_and_preprocess_data(file_path)
-
-        # Prepare features and target
-        X = df.drop('willingness to pursue a career based on their degree  ', axis=1)
-        y = df['willingness to pursue a career based on their degree  '].values
-
-        self.feature_columns = X.columns.tolist()
-
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.3, random_state=42, stratify=y
-        )
-
-        # Train multiple models
-        best_model, best_name, results = self.train_multiple_models(X_train, y_train, X_test, y_test)
-
-        # Optimize the best model
-        optimized_model = self.optimize_best_model(X_train, y_train, best_name)
-
-        self.model = optimized_model
-
+        final_train_matrix = X_train_scaled if self.model_type == "scaled" else X_train
+        train_pred = self.model.predict(final_train_matrix)
+        residuals = y_train - train_pred
+        self.residual_std = float(max(np.std(residuals), 5.0))
         return self.model
 
-    def predict(self, input_data):
-        """Make prediction for new data"""
+    def _ensure_model(self) -> None:
         if self.model is None:
-            raise ValueError("Model not trained yet!")
+            raise ValueError("Model not trained yet.")
 
-        # Convert to DataFrame if needed
+    def _predict_raw_score(self, prepared_df: pd.DataFrame) -> np.ndarray:
+        self._ensure_model()
+        matrix = prepared_df[self.feature_columns]
+        if self.model_type == "scaled":
+            matrix = pd.DataFrame(self.scaler.transform(matrix), columns=self.feature_columns)
+        pred = np.asarray(self.model.predict(matrix), dtype=float)
+        return np.clip(pred, 0.0, 100.0)
+
+    def predict(self, input_data: dict[str, Any] | pd.DataFrame) -> float:
+        profile = self.predict_profile(input_data)
+        return float(profile["readiness_score"])
+
+    def _domain_scores_from_row(self, row: pd.Series) -> dict[str, float]:
+        scores = {
+            "Web Dev": float(row.get("domain_web_dev", 0.0)),
+            "Data": float(row.get("domain_data", 0.0)),
+            "DevOps": float(row.get("domain_devops", 0.0)),
+            "Mobile": float(row.get("domain_mobile", 0.0)),
+        }
+        return {k: float(np.clip(v, 0.0, 100.0)) for k, v in scores.items()}
+
+    def predict_profile(self, input_data: dict[str, Any] | pd.DataFrame) -> dict[str, Any]:
         if isinstance(input_data, dict):
-            df = pd.DataFrame([input_data])
+            frame = pd.DataFrame([input_data])
         else:
-            df = pd.DataFrame(input_data)
+            frame = input_data.copy()
 
-        # Ensure correct column order
-        df = df[self.feature_columns]
+        prepared = normalize_input_frame(frame)
+        readiness = float(self._predict_raw_score(prepared)[0])
+        ci_margin = 1.96 * self.residual_std
+        confidence_low = float(np.clip(readiness - ci_margin, 0.0, 100.0))
+        confidence_high = float(np.clip(readiness + ci_margin, 0.0, 100.0))
 
-        # Scale if needed
-        if self.model_name in ['SVM', 'Logistic Regression']:
-            df_scaled = self.scaler.transform(df)
-            return self.model.predict(df_scaled)[0]
+        domain_scores = self._domain_scores_from_row(prepared.iloc[0])
+        best_domain = max(domain_scores, key=domain_scores.get)
+        readiness_level = "High" if readiness >= 70 else "Moderate" if readiness >= 40 else "Low"
+
+        return {
+            "readiness_score": readiness,
+            "readiness_level": readiness_level,
+            "confidence_interval": [confidence_low, confidence_high],
+            "best_domain": best_domain,
+            "domain_scores": domain_scores,
+            "feature_values": prepared.iloc[0][self.feature_columns].to_dict(),
+        }
+
+    def predict_batch(self, input_data: pd.DataFrame) -> pd.DataFrame:
+        prepared = normalize_input_frame(input_data)
+        readiness_scores = self._predict_raw_score(prepared)
+
+        ci_margin = 1.96 * self.residual_std
+        result = input_data.copy()
+        result["predicted_junior_readiness"] = np.clip(readiness_scores, 0.0, 100.0)
+        result["confidence_low"] = np.clip(result["predicted_junior_readiness"] - ci_margin, 0.0, 100.0)
+        result["confidence_high"] = np.clip(result["predicted_junior_readiness"] + ci_margin, 0.0, 100.0)
+        result["readiness_level"] = pd.cut(
+            result["predicted_junior_readiness"],
+            bins=[-0.01, 40, 70, 100],
+            labels=["Low", "Moderate", "High"],
+        ).astype(str)
+
+        for col in DOMAIN_COLUMNS:
+            if col in prepared.columns:
+                result[col] = prepared[col]
+            else:
+                result[col] = 0.0
+
+        domain_map = {
+            "domain_web_dev": "Web Dev",
+            "domain_data": "Data",
+            "domain_devops": "DevOps",
+            "domain_mobile": "Mobile",
+        }
+        result["best_domain"] = result[list(domain_map.keys())].idxmax(axis=1).map(domain_map)
+        return result
+
+    def get_feature_importance(self) -> pd.DataFrame | None:
+        self._ensure_model()
+
+        if hasattr(self.model, "feature_importances_"):
+            values = np.asarray(self.model.feature_importances_, dtype=float)
+        elif hasattr(self.model, "coef_"):
+            values = np.abs(np.asarray(self.model.coef_, dtype=float).flatten())
         else:
-            return self.model.predict(df)[0]
+            return None
 
-    def get_feature_importance(self):
-        """Get feature importance if available"""
-        if hasattr(self.model, 'feature_importances_'):
-            importance_df = pd.DataFrame({
-                'feature': self.feature_columns,
-                'importance': self.model.feature_importances_
-            }).sort_values('importance', ascending=False)
-            return importance_df
-        return None
+        return pd.DataFrame({"feature": self.feature_columns, "importance": values}).sort_values(
+            "importance", ascending=False
+        )
 
-    def save_model(self, filepath='student_career_willingness_model.pkl'):
-        """Save the trained model"""
+    def get_shap_feature_importance(self, input_frame: pd.DataFrame | None = None) -> pd.DataFrame | None:
+        self._ensure_model()
+        if self.training_reference is None:
+            return None
+
+        try:
+            import shap
+        except Exception:
+            return None
+
+        model_type_name = type(self.model).__name__
+        if model_type_name in ["SVR", "LinearRegression"]:
+            return None
+
+        if input_frame is None:
+            matrix = self.training_reference.copy()
+        else:
+            frame = input_frame.copy()
+            if set(self.feature_columns).issubset(frame.columns):
+                matrix = frame[self.feature_columns]
+            else:
+                matrix = self.training_reference.copy()
+            if self.model_type == "scaled":
+                matrix = pd.DataFrame(self.scaler.transform(matrix), columns=self.feature_columns)
+
+        try:
+            explainer = shap.Explainer(self.model, self.training_reference)
+            shap_values = explainer(matrix)
+            values = np.abs(np.asarray(shap_values.values)).mean(axis=0)
+        except Exception:
+            return None
+
+        return pd.DataFrame({"feature": self.feature_columns, "importance": values}).sort_values(
+            "importance", ascending=False
+        )
+
+    def skill_gap_analysis(self, input_data: dict[str, Any] | pd.DataFrame, target_role: str) -> dict[str, Any]:
+        if isinstance(input_data, dict):
+            frame = pd.DataFrame([input_data])
+        else:
+            frame = input_data.copy()
+        prepared = normalize_input_frame(frame).iloc[0]
+
+        role_thresholds: dict[str, dict[str, float]] = {
+            "Web Dev": {
+                "github_activity_proxy": 5.0,
+                "side_projects_count": 3.0,
+                "languages_known_count": 3.0,
+                "tech_skills_self_rating": 6.0,
+            },
+            "Data": {
+                "college_mark": 75.0,
+                "daily_studying_time": 3.0,
+                "tech_skills_self_rating": 6.5,
+                "certification_course": 1.0,
+            },
+            "DevOps": {
+                "internship_experience": 1.0,
+                "github_activity_proxy": 6.0,
+                "side_projects_count": 2.0,
+                "stress_level": 2.0,
+            },
+            "Mobile": {
+                "side_projects_count": 3.0,
+                "languages_known_count": 3.0,
+                "tech_skills_self_rating": 6.0,
+                "likes_degree": 1.0,
+            },
+        }
+
+        thresholds = role_thresholds.get(target_role, role_thresholds["Web Dev"])
+        missing: list[str] = []
+        met: list[str] = []
+        labels = {
+            "github_activity_proxy": "GitHub activity",
+            "side_projects_count": "side projects",
+            "languages_known_count": "languages known",
+            "tech_skills_self_rating": "tech skills self-rating",
+            "college_mark": "college marks",
+            "daily_studying_time": "daily studying time",
+            "certification_course": "certification",
+            "internship_experience": "internship/co-op experience",
+            "stress_level": "stress management",
+            "likes_degree": "degree alignment",
+        }
+
+        for feature, minimum in thresholds.items():
+            value = float(prepared.get(feature, DEFAULT_FEATURE_VALUES.get(feature, 0.0)))
+            is_met = value <= minimum if feature == "stress_level" else value >= minimum
+            if is_met:
+                met.append(labels.get(feature, feature))
+            else:
+                missing.append(labels.get(feature, feature))
+
+        return {"target_role": target_role, "met": met, "missing": missing}
+
+    def save_model(self, filepath: str = "student_career_willingness_model.pkl") -> None:
         model_data = {
-            'model': self.model,
-            'scaler': self.scaler,
-            'feature_columns': self.feature_columns,
-            'model_name': self.model_name
+            "model": self.model,
+            "scaler": self.scaler,
+            "feature_columns": self.feature_columns,
+            "model_name": self.model_name,
+            "model_type": self.model_type,
+            "residual_std": self.residual_std,
+            "cv_results": self.cv_results,
+            "dataset_counts": self.dataset_counts,
+            "used_files": self.used_files,
+            "training_reference": self.training_reference,
         }
         joblib.dump(model_data, filepath)
 
-    def load_model(self, filepath='student_career_willingness_model.pkl'):
-        """Load a saved model"""
+    def load_model(self, filepath: str = "student_career_willingness_model.pkl") -> None:
         model_data = joblib.load(filepath)
-        self.model = model_data['model']
-        self.scaler = model_data['scaler']
-        self.feature_columns = model_data['feature_columns']
-        self.model_name = model_data['model_name']
+        self.model = model_data["model"]
+        self.scaler = model_data["scaler"]
+        self.feature_columns = model_data["feature_columns"]
+        self.model_name = model_data.get("model_name")
+        self.model_type = model_data.get("model_type", "raw")
+        self.residual_std = model_data.get("residual_std", 8.0)
+        self.cv_results = model_data.get("cv_results", {})
+        self.dataset_counts = model_data.get("dataset_counts", {})
+        self.used_files = model_data.get("used_files", [])
+        self.training_reference = model_data.get("training_reference")
