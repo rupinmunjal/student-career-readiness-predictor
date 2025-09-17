@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Mac
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Logs
+*.log
+
+# Test output
+.coverage
+.htmlcov/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Data files - commit small sample datasets needed for app to run
+# data/*.csv
+
+# Ignore large datasets but keep small sample data
+data/*
+!data/Student Attitude and Behavior.csv
+!data/Placement_Data_Full_Class.csv
+
+# Environment variables
+.env
+.env.local
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
