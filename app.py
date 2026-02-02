@@ -252,70 +252,128 @@ def batch_upload_page(predictor):
         st.dataframe(breakdown, use_container_width=True)
 
 
+def analytics_page(predictor):
+    st.header("Analytics Dashboard")
+
+    st.subheader("Training data sources")
+    sources = pd.DataFrame(
+        [
+            {
+                "Dataset": s["name"],
+                "Rows used": s.get("rows_used", predictor.dataset_counts.get(s["name"], 0)),
+                "Target type": s["target_type"],
+                "Target description": s["target_description"],
+            }
+            for s in DATASET_SOURCES
+        ]
+    )
+    st.dataframe(sources, use_container_width=True)
+
+    st.subheader("Dataset contribution")
+    if predictor.dataset_counts:
+        dc = pd.DataFrame(
+            {"Dataset": list(predictor.dataset_counts.keys()), "Rows": list(predictor.dataset_counts.values())}
+        )
+        fig = px.bar(dc, x="Dataset", y="Rows", title="Rows per dataset")
+        fig.update_layout(height=320, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Dataset counts unavailable (model loaded without retraining).")
+
+    st.subheader("Model cross-validation scores")
+    if predictor.cv_results:
+        cv = pd.DataFrame(
+            [
+                {
+                    "Model": name,
+                    "CV MAE": f"{m['cv_mae']:.2f}",
+                    "CV std": f"{m['cv_std']:.2f}",
+                    "Test MAE": f"{m['test_mae']:.2f}",
+                }
+                for name, m in predictor.cv_results.items()
+            ]
+        ).sort_values("CV MAE")
+        st.dataframe(cv, use_container_width=True)
+        st.caption(f"Selected model: **{predictor.model_name}** (residual std = {predictor.residual_std:.2f})")
+    else:
+        st.info("Cross-validation results unavailable.")
+
+    importance = predictor.get_feature_importance()
+    if importance is not None:
+        st.subheader("Global feature importance (selected model)")
+        fig = px.bar(
+            importance.head(10),
+            x="importance",
+            y="feature",
+            orientation="h",
+            title="Top 10 features",
+        )
+        fig.update_layout(height=400, yaxis={"categoryorder": "total ascending"})
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Feature importance not available for this model type.")
+
+
 def about_page():
-    st.header("ℹ️ About This Application")
+    st.header("About This Application")
 
-    st.markdown("""
-    This application predicts a student's willingness to pursue a career based on their degree using advanced machine learning techniques.
+    st.markdown(
+        """
+This application predicts a student's career readiness for **junior/entry-level** software
+engineering roles based on academic, engagement, and self-reported junior-profile signals.
 
-    ### 🎯 Purpose
-    The goal is to help educators and career counselors identify students who may need additional support or guidance
-    in their career development journey.
+### Pages
+- **Prediction** — single-student analysis with a readiness gauge and domain-fit assessment.
+- **Batch Upload** — upload a CSV of many students, view results, and download predictions with
+  aggregate batch metrics.
+- **Analytics** — training-data provenance, cross-validation scores, and global feature importance.
+- **About** (this page).
 
-    ### 📊 Features Used
-    The model considers multiple factors:
+### Model
+- 6 candidate models are trained (Random Forest, Gradient Boosting, SVR, Linear Regression,
+  XGBoost, LightGBM when available) and the lowest-MAE model is auto-selected.
+- 5-fold cross-validation is used for ranking; a residual-based 95% confidence interval is
+  reported for each prediction.
+- Features include 14 raw inputs plus 3 engineered relevance scores and 4 domain-fit scores
+  (Web Dev, Data, DevOps, Mobile).
 
-    - **Academic Performance**: 10th, 12th grade, and college marks
-    - **Engagement**: Certification courses and degree satisfaction
-    - **Study Habits**: Daily study time allocation
-    - **Life Balance**: Travel time, stress levels, and work commitments
+### Data
+The model is trained on **450 honestly-aligned records** from two publicly available datasets:
+self-reported student attitude/behavior surveys and real campus placement outcomes. No
+synthetic or fabricated targets are used.
 
-    ### 🧠 Model Information
-    - **Algorithms**: Ensemble of Random Forest, Gradient Boosting, SVM, and Logistic Regression
-    - **Model Selection**: Automatically selects the best performing algorithm
-    - **Hyperparameter Optimization**: Grid search for optimal parameters
-    - **Cross-validation**: 5-fold cross-validation for robust evaluation
-    - **Features**: 9 key student characteristics
-    - **Output**: Percentage likelihood of career pursuit
-
-    ### 📈 Interpretation Guide
-    - **75-100%**: High willingness - student is motivated and engaged
-    - **50-74%**: Moderate willingness - may benefit from career guidance
-    - **25-49%**: Low willingness - likely needs significant support
-
-    ### 🚀 How to Use
-    1. **Prediction**: Go to the 'Prediction' page to input student details and get career willingness predictions.
-    2. **Batch Upload**: Upload multiple student profiles via CSV for bulk predictions.
-    3. **About**: Learn more about the application and its purpose on the 'About' page.
-
-    **Target Variable:**
-    - `willingness to pursue a career based on their degree  `: Target percentage (with % sign)
-    """)
-
-    st.markdown("---")
-    st.markdown("Built with ❤️ using Streamlit, Scikit-learn, and Plotly")
+### How to run
+```bash
+uv sync
+uv run streamlit run app.py
+```
+"""
+    )
+    st.markdown("Built with Streamlit, scikit-learn, Plotly.")
 
 
 def main():
     st.set_page_config(
-        page_title="Student Career Willingness Predictor",
+        page_title="Student Career Readiness Predictor",
         page_icon="🎓",
         layout="wide",
         initial_sidebar_state="expanded"
     )
 
-    st.title("🎓 Student Career Willingness Predictor")
+    st.title("🎓 Student Career Readiness Predictor")
     st.markdown("---")
 
     predictor = initialize_components()
 
     st.sidebar.title("Navigation")
-    page = st.sidebar.selectbox("Choose a page:", ["Prediction", "Batch Upload", "About"])
+    page = st.sidebar.selectbox("Choose a page:", ["Prediction", "Batch Upload", "Analytics", "About"])
 
     if page == "Prediction":
         prediction_page(predictor)
     elif page == "Batch Upload":
         batch_upload_page(predictor)
+    elif page == "Analytics":
+        analytics_page(predictor)
     else:
         about_page()
 
