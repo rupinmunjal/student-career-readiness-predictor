@@ -1,16 +1,21 @@
-import streamlit as st
+from typing import Any
+
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
+
+from src import StudentCareerWillingnessPredictor, MODEL_FEATURES
+from src.data_pipeline import DATASET_SOURCES, DEFAULT_FEATURE_VALUES, DOMAIN_COLUMNS
+
+
+ROLES = ["Web Dev", "Data", "DevOps", "Mobile"]
+
+
 import os
 
-# Import the separate logic modules
-from src import StudentCareerWillingnessPredictor
-
-
-# Initialize components
 @st.cache_resource
 def initialize_components():
-    """Initialize predictor with default dataset"""
     predictor = StudentCareerWillingnessPredictor()
 
     model_path = 'models/student_career_willingness_model.pkl'
@@ -28,36 +33,9 @@ def initialize_components():
     return predictor
 
 
-def main():
-    st.set_page_config(
-        page_title="Student Career Willingness Predictor",
-        page_icon="🎓",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-
-    st.title("🎓 Student Career Willingness Predictor")
-    st.markdown("---")
-
-    # Initialize predictor
-    predictor = initialize_components()
-
-    # Sidebar navigation
-    st.sidebar.title("Navigation")
-    page = st.sidebar.selectbox("Choose a page:", ["Prediction", "About"])
-
-    # Route pages
-    if page == "Prediction":
-        prediction_page(predictor)
-    else:
-        about_page()
-
-
 def prediction_page(predictor):
-    """Main prediction interface"""
     st.header("🔮 Career Willingness Prediction")
 
-    # Check if model is available
     if predictor.model is None:
         st.error("⚠️ No trained model available. Please check default dataset.")
         return
@@ -67,7 +45,6 @@ def prediction_page(predictor):
     with col1:
         st.subheader("Student Information")
 
-        # Academic Information
         with st.expander("📚 Academic Performance", expanded=True):
             col_a, col_b, col_c = st.columns(3)
             with col_a:
@@ -77,7 +54,6 @@ def prediction_page(predictor):
             with col_c:
                 college_mark = st.slider("College Marks (%)", 0.0, 100.0, 80.0)
 
-        # Engagement Factors
         with st.expander("💡 Engagement & Interest", expanded=True):
             col_d, col_e = st.columns(2)
             with col_d:
@@ -85,14 +61,12 @@ def prediction_page(predictor):
             with col_e:
                 like_degree = st.selectbox("Do you like your degree?", ["No", "Yes"])
 
-        # Study Habits
         with st.expander("📖 Study Habits", expanded=True):
             study_time = st.selectbox(
                 "Daily Study Time",
                 ["0-30 minutes", "30-60 minutes", "1-2 hours", "2-3 hours", "3-4 hours", "More than 4 hours"]
             )
 
-        # Life Balance
         with st.expander("⚖️ Life Balance", expanded=True):
             col_f, col_g, col_h = st.columns(3)
             with col_f:
@@ -108,7 +82,6 @@ def prediction_page(predictor):
     with col2:
         st.subheader("📊 Prediction Results")
 
-        # Transform inputs
         study_time_mapping = {
             "0-30 minutes": 0.0, "30-60 minutes": 1.0, "1-2 hours": 2.0,
             "2-3 hours": 3.0, "3-4 hours": 4.0, "More than 4 hours": 5.0
@@ -133,13 +106,11 @@ def prediction_page(predictor):
             'part-time job': 1.0 if part_time == "Yes" else 0.0
         }
 
-        # Make prediction
         if st.button("🎯 Predict Career Willingness", type="primary"):
             with st.spinner("Analyzing student profile..."):
                 try:
                     prediction = predictor.predict(input_data)
 
-                    # Display prediction with gauge chart
                     fig = go.Figure(go.Indicator(
                         mode="gauge+number+delta",
                         value=prediction,
@@ -164,7 +135,6 @@ def prediction_page(predictor):
                     fig.update_layout(height=300)
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # Interpretation
                     if prediction >= 75:
                         st.success(f"🌟 High Career Willingness ({prediction:.1f}%)")
                     elif prediction >= 50:
@@ -175,26 +145,114 @@ def prediction_page(predictor):
                 except Exception as e:
                     st.error(f"Error making prediction: {e}")
 
-        # Show input summary
         st.subheader("📋 Input Summary")
         summary_df = pd.DataFrame([input_data]).T
         summary_df.columns = ['Value']
         st.dataframe(summary_df, use_container_width=True)
 
-        # Show feature importance if available
-        # if predictor.model is not None:
-        #     importance_df = predictor.get_feature_importance()
-        #     if importance_df is not None:
-        #         st.subheader("🔍 Feature Importance")
-        #         fig = px.bar(importance_df.head(5),
-        #                      x='importance', y='feature',
-        #                      orientation='h',
-        #                      title="Top 5 Most Important Features")
-        #         fig.update_layout(height=300)
-        #         st.plotly_chart(fig, use_container_width=True)
+
+def batch_upload_page(predictor):
+    st.header("Batch Upload")
+    st.markdown(
+        "Upload a CSV of student profiles to predict career readiness for many students at once. "
+        f"Optional columns (missing ones are filled with sensible defaults): "
+        f"`{', '.join(MODEL_FEATURES)}`."
+    )
+
+    if predictor.model is None:
+        st.error("No trained model available.")
+        return
+
+    uploaded = st.file_uploader("Choose a CSV file", type=["csv"])
+    if uploaded is None:
+        st.info("Awaiting CSV upload.")
+        return
+
+    try:
+        df = pd.read_csv(uploaded)
+    except Exception as e:
+        st.error(f"Could not read CSV: {e}")
+        return
+
+    if len(df) == 0:
+        st.warning("Uploaded file has no rows.")
+        return
+
+    st.subheader("Uploaded data")
+    st.dataframe(df.head(10), use_container_width=True)
+    st.caption(f"{len(df)} rows, {len(df.columns)} columns")
+
+    if not st.button("Run batch prediction", type="primary"):
+        return
+
+    with st.spinner("Running predictions..."):
+        try:
+            results = predictor.predict_batch(df)
+        except Exception as e:
+            st.error(f"Batch prediction failed: {e}")
+            return
+
+    st.subheader("Results")
+    st.dataframe(results.head(50), use_container_width=True)
+
+    csv = results.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download results as CSV",
+        data=csv,
+        file_name="batch_predictions.csv",
+        mime="text/csv",
+    )
+
+    st.markdown("---")
+    st.subheader("Batch metrics")
+
+    scores = results["predicted_junior_readiness"]
+    mean_val = float(scores.mean())
+
+    level_counts = results["readiness_level"].value_counts()
+    n = len(results)
+    high_pct = float(level_counts.get("High", 0)) / n * 100 if n else 0.0
+    mod_pct = float(level_counts.get("Moderate", 0)) / n * 100 if n else 0.0
+    low_pct = float(level_counts.get("Low", 0)) / n * 100 if n else 0.0
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Students", f"{n}")
+    k2.metric("Mean readiness", f"{mean_val:.1f}%")
+    k3.metric("High (%)", f"{high_pct:.1f}%")
+    k4.metric("Low (%)", f"{low_pct:.1f}%")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        domain_counts = results["best_domain"].value_counts().reindex(ROLES, fill_value=0)
+        fig = px.bar(
+            x=domain_counts.index,
+            y=domain_counts.values,
+            labels={"x": "Domain", "y": "Students"},
+            title="Best-fit domain distribution",
+        )
+        fig.update_layout(height=320, showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    with c2:
+        fig = px.histogram(results, x="predicted_junior_readiness", nbins=20, title="Readiness distribution")
+        fig.update_layout(height=320, xaxis_title="Readiness (%)", showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("Level breakdown"):
+        breakdown = pd.DataFrame(
+            {
+                "Level": ["High", "Moderate", "Low"],
+                "Count": [
+                    int(level_counts.get("High", 0)),
+                    int(level_counts.get("Moderate", 0)),
+                    int(level_counts.get("Low", 0)),
+                ],
+                "Percent": [high_pct, mod_pct, low_pct],
+            }
+        )
+        st.dataframe(breakdown, use_container_width=True)
+
 
 def about_page():
-    """About page with application information"""
     st.header("ℹ️ About This Application")
 
     st.markdown("""
@@ -227,7 +285,7 @@ def about_page():
 
     ### 🚀 How to Use
     1. **Prediction**: Go to the 'Prediction' page to input student details and get career willingness predictions.
-    2. **Analysis**: Explore the 'Data Analysis' page to view insights, feature impacts, and model performance.
+    2. **Batch Upload**: Upload multiple student profiles via CSV for bulk predictions.
     3. **About**: Learn more about the application and its purpose on the 'About' page.
 
     **Target Variable:**
@@ -236,6 +294,30 @@ def about_page():
 
     st.markdown("---")
     st.markdown("Built with ❤️ using Streamlit, Scikit-learn, and Plotly")
+
+
+def main():
+    st.set_page_config(
+        page_title="Student Career Willingness Predictor",
+        page_icon="🎓",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+
+    st.title("🎓 Student Career Willingness Predictor")
+    st.markdown("---")
+
+    predictor = initialize_components()
+
+    st.sidebar.title("Navigation")
+    page = st.sidebar.selectbox("Choose a page:", ["Prediction", "Batch Upload", "About"])
+
+    if page == "Prediction":
+        prediction_page(predictor)
+    elif page == "Batch Upload":
+        batch_upload_page(predictor)
+    else:
+        about_page()
 
 
 if __name__ == "__main__":
