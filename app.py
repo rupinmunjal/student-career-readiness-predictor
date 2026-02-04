@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 import pandas as pd
@@ -12,146 +13,222 @@ from src.data_pipeline import DATASET_SOURCES, DEFAULT_FEATURE_VALUES, DOMAIN_CO
 ROLES = ["Web Dev", "Data", "DevOps", "Mobile"]
 
 
-import os
+def _render_radar_chart(domain_scores: dict[str, float]) -> go.Figure:
+    categories = list(domain_scores.keys())
+    values = list(domain_scores.values())
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatterpolar(
+            r=values + [values[0]],
+            theta=categories + [categories[0]],
+            fill="toself",
+            name="Domain fit",
+            line=dict(color="#2E86DE"),
+        )
+    )
+    fig.update_layout(
+        polar=dict(radialaxis=dict(range=[0, 100], showticklabels=True)),
+        showlegend=False,
+        height=320,
+        margin=dict(l=40, r=40, t=20, b=20),
+    )
+    return fig
+
+
+def _render_gauge(value: float) -> go.Figure:
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=value,
+            domain={"x": [0, 1], "y": [0, 1]},
+            title={"text": "Readiness (%)"},
+            gauge={
+                "axis": {"range": [None, 100]},
+                "bar": {"color": "darkblue"},
+                "steps": [
+                    {"range": [0, 40], "color": "#ffcccc"},
+                    {"range": [40, 70], "color": "#fff3cd"},
+                    {"range": [70, 100], "color": "#d4edda"},
+                ],
+                "threshold": {
+                    "line": {"color": "red", "width": 3},
+                    "thickness": 0.75,
+                    "value": 85,
+                },
+            },
+        )
+    )
+    fig.update_layout(height=260, margin=dict(l=20, r=20, t=10, b=10))
+    return fig
+
+
+def _readiness_label(score: float) -> tuple[str, str]:
+    if score >= 70:
+        return "High", "success"
+    if score >= 40:
+        return "Moderate", "warning"
+    return "Low", "error"
+
 
 @st.cache_resource
-def initialize_components():
+def initialize_components() -> StudentCareerWillingnessPredictor:
     predictor = StudentCareerWillingnessPredictor()
-
-    model_path = 'models/student_career_willingness_model.pkl'
+    model_path = "models/student_career_willingness_model.pkl"
     if os.path.exists(model_path):
         try:
             predictor.load_model(model_path)
         except Exception as e:
-            st.sidebar.warning(f"⚠️ Could not load pre-trained model: {e}")
+            st.sidebar.warning(f"Could not load pre-trained model: {e}")
             predictor.train("data/Student Attitude and Behavior.csv")
             predictor.save_model(model_path)
     else:
         predictor.train("data/Student Attitude and Behavior.csv")
         predictor.save_model(model_path)
-
     return predictor
 
 
-def prediction_page(predictor):
-    st.header("🔮 Career Willingness Prediction")
+def prediction_page(predictor: StudentCareerWillingnessPredictor) -> None:
+    st.header("Career Readiness Prediction")
 
     if predictor.model is None:
-        st.error("⚠️ No trained model available. Please check default dataset.")
+        st.error("No trained model available.")
         return
 
-    col1, col2 = st.columns([2, 1])
+    col1, col2 = st.columns([2, 3])
 
     with col1:
         st.subheader("Student Information")
 
-        with st.expander("📚 Academic Performance", expanded=True):
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                tenth_mark = st.slider("10th Grade Marks (%)", 0.0, 100.0, 75.0)
-            with col_b:
-                twelfth_mark = st.slider("12th Grade Marks (%)", 0.0, 100.0, 70.0)
-            with col_c:
-                college_mark = st.slider("College Marks (%)", 0.0, 100.0, 80.0)
+        with st.expander("Academic Performance", expanded=True):
+            c1, c2, c3 = st.columns(3)
+            tenth_mark = c1.slider("10th Grade Marks (%)", 0.0, 100.0, 75.0)
+            twelfth_mark = c2.slider("12th Grade Marks (%)", 0.0, 100.0, 70.0)
+            college_mark = c3.slider("College Marks (%)", 0.0, 100.0, 80.0)
 
-        with st.expander("💡 Engagement & Interest", expanded=True):
-            col_d, col_e = st.columns(2)
-            with col_d:
-                cert_course = st.selectbox("Certification Course", ["No", "Yes"])
-            with col_e:
-                like_degree = st.selectbox("Do you like your degree?", ["No", "Yes"])
+        with st.expander("Engagement & Junior Profile", expanded=True):
+            c1, c2 = st.columns(2)
+            cert_course = c1.selectbox("Certification Course", ["No", "Yes"])
+            like_degree = c2.selectbox("Likes degree?", ["No", "Yes"])
+            c1, c2 = st.columns(2)
+            github_activity = c1.slider("GitHub activity (proxy 0-10)", 0.0, 10.0, 4.0)
+            side_projects = c2.slider("Side projects count", 0.0, 10.0, 1.0)
+            c1, c2 = st.columns(2)
+            internship_exp = c1.slider("Internship experience (0/1)", 0.0, 1.0, 0.0, step=1.0)
+            tech_rating = c2.slider("Tech skills self-rating (1-10)", 1.0, 10.0, 5.0)
+            languages = st.slider("Languages known count", 0.0, 10.0, 2.0)
 
-        with st.expander("📖 Study Habits", expanded=True):
+        with st.expander("Study Habits & Life Balance", expanded=True):
             study_time = st.selectbox(
                 "Daily Study Time",
-                ["0-30 minutes", "30-60 minutes", "1-2 hours", "2-3 hours", "3-4 hours", "More than 4 hours"]
+                [
+                    "0-30 minutes",
+                    "30-60 minutes",
+                    "1-2 hours",
+                    "2-3 hours",
+                    "3-4 hours",
+                    "More than 4 hours",
+                ],
             )
-
-        with st.expander("⚖️ Life Balance", expanded=True):
-            col_f, col_g, col_h = st.columns(3)
-            with col_f:
-                travel_time = st.selectbox(
-                    "Daily Travel Time",
-                    ["0-30 mins", "30-60 mins", "1-1.5 hrs", "1.5-2 hrs", "2-2.5 hrs", "2.5-3 hrs", "3+ hrs"]
-                )
-            with col_g:
-                stress_level = st.selectbox("Stress Level", ["Bad", "Awful", "Good", "Fabulous"])
-            with col_h:
-                part_time = st.selectbox("Part-time Job", ["No", "Yes"])
+            c1, c2, c3 = st.columns(3)
+            travel_time = c1.selectbox(
+                "Daily Travel Time",
+                ["0-30 mins", "30-60 mins", "1-1.5 hrs", "1.5-2 hrs", "2-2.5 hrs", "2.5-3 hrs", "3+ hrs"],
+            )
+            stress_level = c2.selectbox("Stress Level", ["Bad", "Awful", "Good", "Fabulous"])
+            part_time = c3.selectbox("Part-time Job", ["No", "Yes"])
 
     with col2:
-        st.subheader("📊 Prediction Results")
+        st.subheader("Prediction Results")
 
-        study_time_mapping = {
+        study_time_map = {
             "0-30 minutes": 0.0, "30-60 minutes": 1.0, "1-2 hours": 2.0,
-            "2-3 hours": 3.0, "3-4 hours": 4.0, "More than 4 hours": 5.0
+            "2-3 hours": 3.0, "3-4 hours": 4.0, "More than 4 hours": 5.0,
         }
-
-        travel_mapping = {
+        travel_map = {
             "0-30 mins": 0.0, "30-60 mins": 1.0, "1-1.5 hrs": 2.0,
-            "1.5-2 hrs": 3.0, "2-2.5 hrs": 4.0, "2.5-3 hrs": 5.0, "3+ hrs": 6.0
+            "1.5-2 hrs": 3.0, "2-2.5 hrs": 4.0, "2.5-3 hrs": 5.0, "3+ hrs": 6.0,
+        }
+        stress_map = {"Bad": 0.0, "Awful": 1.0, "Good": 2.0, "Fabulous": 3.0}
+
+        input_data: dict[str, Any] = {
+            "certification_course": 1.0 if cert_course == "Yes" else 0.0,
+            "tenth_mark": float(tenth_mark),
+            "twelfth_mark": float(twelfth_mark),
+            "college_mark": float(college_mark),
+            "daily_studying_time": study_time_map[study_time],
+            "likes_degree": 1.0 if like_degree == "Yes" else 0.0,
+            "travel_time": travel_map[travel_time],
+            "stress_level": stress_map[stress_level],
+            "part_time_job": 1.0 if part_time == "Yes" else 0.0,
+            "github_activity_proxy": float(github_activity),
+            "side_projects_count": float(side_projects),
+            "internship_experience": float(internship_exp),
+            "tech_skills_self_rating": float(tech_rating),
+            "languages_known_count": float(languages),
         }
 
-        stress_mapping = {"Bad": 0.0, "Awful": 1.0, "Good": 2.0, "Fabulous": 3.0}
-
-        input_data = {
-            'Certification Course': 1.0 if cert_course == "Yes" else 0.0,
-            '10th Mark': float(tenth_mark),
-            '12th Mark': float(twelfth_mark),
-            'college mark': float(college_mark),
-            'daily studing time': study_time_mapping[study_time],
-            'Do you like your degree?': 1.0 if like_degree == "Yes" else 0.0,
-            'Travelling Time ': travel_mapping[travel_time],
-            'Stress Level ': stress_mapping[stress_level],
-            'part-time job': 1.0 if part_time == "Yes" else 0.0
-        }
-
-        if st.button("🎯 Predict Career Willingness", type="primary"):
-            with st.spinner("Analyzing student profile..."):
+        if st.button("Predict Career Readiness", type="primary"):
+            with st.spinner("Analyzing profile..."):
                 try:
-                    prediction = predictor.predict(input_data)
-
-                    fig = go.Figure(go.Indicator(
-                        mode="gauge+number+delta",
-                        value=prediction,
-                        domain={'x': [0, 1], 'y': [0, 1]},
-                        title={'text': "Career Willingness (%)"},
-                        delta={'reference': 50},
-                        gauge={
-                            'axis': {'range': [None, 100]},
-                            'bar': {'color': "darkblue"},
-                            'steps': [
-                                {'range': [0, 50], 'color': "lightgray"},
-                                {'range': [50, 80], 'color': "gray"},
-                                {'range': [80, 100], 'color': "lightgreen"}
-                            ],
-                            'threshold': {
-                                'line': {'color': "red", 'width': 4},
-                                'thickness': 0.75,
-                                'value': 90
-                            }
-                        }
-                    ))
-                    fig.update_layout(height=300)
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    if prediction >= 75:
-                        st.success(f"🌟 High Career Willingness ({prediction:.1f}%)")
-                    elif prediction >= 50:
-                        st.warning(f"⚖️ Moderate Career Willingness ({prediction:.1f}%)")
-                    else:
-                        st.error(f"⚠️ Low Career Willingness ({prediction:.1f}%)")
-
+                    profile = predictor.predict_profile(input_data)
                 except Exception as e:
-                    st.error(f"Error making prediction: {e}")
+                    st.error(f"Prediction failed: {e}")
+                    return
 
-        st.subheader("📋 Input Summary")
-        summary_df = pd.DataFrame([input_data]).T
-        summary_df.columns = ['Value']
-        st.dataframe(summary_df, use_container_width=True)
+            score = profile["readiness_score"]
+            label, kind = _readiness_label(score)
+            ci_low, ci_high = profile["confidence_interval"]
+
+            g_col, r_col = st.columns([1, 1])
+            g_col.plotly_chart(_render_gauge(score), use_container_width=True)
+            with r_col:
+                getattr(st, kind)(f"{label} readiness: **{score:.1f}%**")
+                st.caption(f"Confidence interval: **{ci_low:.1f}% – {ci_high:.1f}%**")
+                st.caption(f"Best-fit domain: **{profile['best_domain']}**")
+
+            st.subheader("Domain Fit")
+            st.plotly_chart(
+                _render_radar_chart(profile["domain_scores"]),
+                use_container_width=True,
+            )
+
+            st.subheader("Skill Gap Analysis")
+            target = st.selectbox("Target role", ROLES, index=ROLES.index(profile["best_domain"]))
+            gap = predictor.skill_gap_analysis(input_data, target_role=target)
+            g1, g2 = st.columns(2)
+            with g1:
+                st.markdown(f"**Met** ({len(gap['met'])})")
+                if gap["met"]:
+                    for item in gap["met"]:
+                        st.markdown(f"- {item}")
+                else:
+                    st.caption("None yet")
+            with g2:
+                st.markdown(f"**Missing** ({len(gap['missing'])})")
+                if gap["missing"]:
+                    for item in gap["missing"]:
+                        st.markdown(f"- {item}")
+                else:
+                    st.caption("None — fully aligned")
+
+            importance = predictor.get_feature_importance()
+            if importance is not None:
+                st.subheader("Top 5 Feature Importances")
+                fig = px.bar(
+                    importance.head(5),
+                    x="importance",
+                    y="feature",
+                    orientation="h",
+                    title="Top 5 features",
+                )
+                fig.update_layout(height=280, yaxis={"categoryorder": "total ascending"})
+                st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("Input summary"):
+            st.dataframe(pd.DataFrame([input_data]).T, use_container_width=True)
 
 
-def batch_upload_page(predictor):
+def batch_upload_page(predictor: StudentCareerWillingnessPredictor) -> None:
     st.header("Batch Upload")
     st.markdown(
         "Upload a CSV of student profiles to predict career readiness for many students at once. "
@@ -252,7 +329,7 @@ def batch_upload_page(predictor):
         st.dataframe(breakdown, use_container_width=True)
 
 
-def analytics_page(predictor):
+def analytics_page(predictor: StudentCareerWillingnessPredictor) -> None:
     st.header("Analytics Dashboard")
 
     st.subheader("Training data sources")
@@ -277,8 +354,6 @@ def analytics_page(predictor):
         fig = px.bar(dc, x="Dataset", y="Rows", title="Rows per dataset")
         fig.update_layout(height=320, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Dataset counts unavailable (model loaded without retraining).")
 
     st.subheader("Model cross-validation scores")
     if predictor.cv_results:
@@ -295,8 +370,6 @@ def analytics_page(predictor):
         ).sort_values("CV MAE")
         st.dataframe(cv, use_container_width=True)
         st.caption(f"Selected model: **{predictor.model_name}** (residual std = {predictor.residual_std:.2f})")
-    else:
-        st.info("Cross-validation results unavailable.")
 
     importance = predictor.get_feature_importance()
     if importance is not None:
@@ -310,11 +383,9 @@ def analytics_page(predictor):
         )
         fig.update_layout(height=400, yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Feature importance not available for this model type.")
 
 
-def about_page():
+def about_page() -> None:
     st.header("About This Application")
 
     st.markdown(
@@ -323,10 +394,12 @@ This application predicts a student's career readiness for **junior/entry-level*
 engineering roles based on academic, engagement, and self-reported junior-profile signals.
 
 ### Pages
-- **Prediction** — single-student analysis with a readiness gauge and domain-fit assessment.
+- **Prediction** — single-student analysis with readiness gauge, domain-fit radar chart,
+  confidence interval, and skill-gap analysis for a target role.
 - **Batch Upload** — upload a CSV of many students, view results, and download predictions with
-  aggregate batch metrics.
-- **Analytics** — training-data provenance, cross-validation scores, and global feature importance.
+  aggregate batch metrics (mean readiness, level distribution, domain distribution).
+- **Analytics** — training-data provenance, cross-validation scores, and global feature
+  importance for the selected model.
 - **About** (this page).
 
 ### Model
@@ -334,8 +407,8 @@ engineering roles based on academic, engagement, and self-reported junior-profil
   XGBoost, LightGBM when available) and the lowest-MAE model is auto-selected.
 - 5-fold cross-validation is used for ranking; a residual-based 95% confidence interval is
   reported for each prediction.
-- Features include 14 raw inputs plus 3 engineered relevance scores and 4 domain-fit scores
-  (Web Dev, Data, DevOps, Mobile).
+- Features include 14 raw/canonical inputs plus 3 engineered relevance scores and 4 domain-fit
+  scores (Web Dev, Data, DevOps, Mobile).
 
 ### Data
 The model is trained on **450 honestly-aligned records** from two publicly available datasets:
@@ -352,12 +425,12 @@ uv run streamlit run app.py
     st.markdown("Built with Streamlit, scikit-learn, Plotly.")
 
 
-def main():
+def main() -> None:
     st.set_page_config(
         page_title="Student Career Readiness Predictor",
         page_icon="🎓",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="expanded",
     )
 
     st.title("🎓 Student Career Readiness Predictor")
