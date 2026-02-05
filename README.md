@@ -115,10 +115,13 @@ uv run streamlit run app.py
 Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ### App Views
-- **Single Prediction**: Individual student analysis
-- **Batch Upload**: Process multiple students via CSV
-- **Analytics Dashboard**: Aggregate statistics
-- **About Page**: Model details and data sources
+- **Prediction**: Individual student analysis — readiness gauge, domain-fit radar chart,
+  confidence interval, skill-gap analysis for a target role, and top feature importances.
+- **Batch Upload**: Process many students via CSV upload, view results, download predictions,
+  and inspect batch metrics (mean readiness, level distribution, best-domain distribution).
+- **Analytics Dashboard**: Training-data provenance, cross-validation scores, and global
+  feature importance for the selected model.
+- **About Page**: Model details and data sources.
 
 ---
 
@@ -126,7 +129,7 @@ Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ```
 student-career-willingness-predictor/
-├── app.py                          # Main Streamlit app (4 views)
+├── app.py                          # Main Streamlit app (4 views: Prediction, Batch Upload, Analytics, About)
 ├── pyproject.toml                  # Modern dependency management
 ├── uv.lock                         # Locked dependency versions
 ├── .gitignore                      # File exclusion patterns
@@ -134,14 +137,14 @@ student-career-willingness-predictor/
 │   ├── Student Attitude and Behavior.csv  # 235 self-reported surveys
 │   └── Placement_Data_Full_Class.csv    # 215 real placement outcomes
 ├── models/                         # Trained models
-│   └── student_career_willingness_model.pkl  # SVR model
+│   └── student_career_willingness_model.pkl  # Auto-selected best model
 ├── src/                            # Modular source code
 │   ├── __init__.py                     # Package imports
-│   ├── data_pipeline.py               # Multi-dataset pipeline
-│   └── student_career_willingness_predictor.py  # Core predictor
-├── tests/                          # Comprehensive test suite
-│   ├── test_predictor.py              # Unit tests
-│   ├── test_visual_output.py          # Visual tests
+│   ├── data_pipeline.py               # Multi-dataset pipeline + canonical features
+│   └── student_career_willingness_predictor.py  # Core predictor (train/predict/batch/skill-gap/SHAP)
+├── tests/                          # Test suite
+│   ├── test_predictor.py              # Unit tests (single, batch, skill-gap)
+│   ├── test_visual_output.py          # Visual output generation checks
 │   └── validate_pipeline.py          # Data validation
 └── README.md                       # This file
 ```
@@ -206,7 +209,7 @@ uv run python tests/validate_pipeline.py
 ```
 
 ### Test Results
-- ✅ 3 unit tests covering core functionality
+- ✅ 4 unit tests covering core functionality
 - ✅ Edge case validation
 - ✅ Batch prediction testing
 - ✅ Pipeline integrity checks

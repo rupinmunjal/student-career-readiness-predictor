@@ -87,6 +87,20 @@ class TestStudentCareerWillingnessPredictor(unittest.TestCase):
             self.assertIn(col, out.columns)
         self.assertEqual(len(out), 2)
 
+    def test_batch_prediction_with_missing_columns_uses_defaults(self) -> None:
+        partial = pd.DataFrame(
+            [
+                {"tenth_mark": 80, "twelfth_mark": 75, "college_mark": 78},
+                {"tenth_mark": 55, "college_mark": 60},
+            ]
+        )
+        out = self.predictor.predict_batch(partial)
+        self.assertEqual(len(out), 2)
+        for col in ["predicted_junior_readiness", "best_domain", "readiness_level"]:
+            self.assertIn(col, out.columns)
+        self.assertTrue((out["predicted_junior_readiness"] >= 0).all())
+        self.assertTrue((out["predicted_junior_readiness"] <= 100).all())
+
     def test_skill_gap_analysis(self) -> None:
         gap = self.predictor.skill_gap_analysis(
             {
