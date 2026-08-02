@@ -113,6 +113,10 @@ docker compose up --build
 
 The Streamlit interface is available at [http://localhost:8501](http://localhost:8501).
 
+The FastAPI service exposes health, prediction, batch prediction, skill-gap, and prediction
+history endpoints. Interactive API documentation is available at
+[http://localhost:8000/docs](http://localhost:8000/docs) when the API service is running.
+
 ### Start the app
 ```bash
 uv run streamlit run app.py
