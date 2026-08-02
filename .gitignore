@@ -11,6 +11,8 @@ ENV/
 # IDE
 .idea/
 .vscode/
+.playwright-cli/
+graphify-out/
 *.swp
 *.swo
 
