@@ -128,7 +128,9 @@ def skill_gap(request: SkillGapRequest) -> SkillGapResponse:
         request.student_profile.model_dump(),
         target_role=request.target_role,
     )
-    recommendations = [f"Strengthen {skill} for {request.target_role}." for skill in result["missing"]]
+    recommendations = [
+        f"Strengthen {skill} for {request.target_role}." for skill in result["missing"]
+    ]
     return SkillGapResponse(**result, recommendations=recommendations)
 
 
@@ -148,7 +150,7 @@ async def history(
             if record.readiness_score >= 40
             else "Low"
         )
-        best_domain = max(record.domain_fit_json, key=record.domain_fit_json.get)
+        best_domain = max(record.domain_fit_json, key=lambda name: record.domain_fit_json[name])
         history_records.append(
             HistoryRecord(
                 id=record.id,

@@ -1,5 +1,5 @@
 import os
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import plotly.express as px
@@ -8,8 +8,7 @@ import requests
 import streamlit as st
 
 from src import MODEL_FEATURES
-from src.data_pipeline import DATASET_SOURCES, DEFAULT_FEATURE_VALUES, DOMAIN_COLUMNS
-
+from src.data_pipeline import DATASET_SOURCES, DOMAIN_COLUMNS
 
 ROLES = ["Web Dev", "Data", "DevOps", "Mobile"]
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -25,14 +24,14 @@ def _render_radar_chart(domain_scores: dict[str, float]) -> go.Figure:
             theta=categories + [categories[0]],
             fill="toself",
             name="Domain fit",
-            line=dict(color="#2E86DE"),
+            line={"color": "#2E86DE"},
         )
     )
     fig.update_layout(
-        polar=dict(radialaxis=dict(range=[0, 100], showticklabels=True)),
+        polar={"radialaxis": {"range": [0, 100], "showticklabels": True}},
         showlegend=False,
         height=320,
-        margin=dict(l=40, r=40, t=20, b=20),
+        margin={"l": 40, "r": 40, "t": 20, "b": 20},
     )
     return fig
 
@@ -60,7 +59,7 @@ def _render_gauge(value: float) -> go.Figure:
             },
         )
     )
-    fig.update_layout(height=260, margin=dict(l=20, r=20, t=10, b=10))
+    fig.update_layout(height=260, margin={"l": 20, "r": 20, "t": 10, "b": 10})
     return fig
 
 
@@ -77,7 +76,7 @@ def initialize_components() -> dict[str, Any]:
     try:
         response = requests.get(f"{API_BASE_URL}/model_info", timeout=10)
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
     except requests.RequestException as exc:
         st.sidebar.warning(f"Could not connect to prediction API: {exc}")
         return {}
@@ -128,7 +127,15 @@ def prediction_page(model_info: dict[str, Any]) -> None:
             c1, c2, c3 = st.columns(3)
             travel_time = c1.selectbox(
                 "Daily Travel Time",
-                ["0-30 mins", "30-60 mins", "1-1.5 hrs", "1.5-2 hrs", "2-2.5 hrs", "2.5-3 hrs", "3+ hrs"],
+                [
+                    "0-30 mins",
+                    "30-60 mins",
+                    "1-1.5 hrs",
+                    "1.5-2 hrs",
+                    "2-2.5 hrs",
+                    "2.5-3 hrs",
+                    "3+ hrs",
+                ],
             )
             stress_level = c2.selectbox("Stress Level", ["Bad", "Awful", "Good", "Fabulous"])
             part_time = c3.selectbox("Part-time Job", ["No", "Yes"])
@@ -137,12 +144,21 @@ def prediction_page(model_info: dict[str, Any]) -> None:
         st.subheader("Prediction Results")
 
         study_time_map = {
-            "0-30 minutes": 0.0, "30-60 minutes": 1.0, "1-2 hours": 2.0,
-            "2-3 hours": 3.0, "3-4 hours": 4.0, "More than 4 hours": 5.0,
+            "0-30 minutes": 0.0,
+            "30-60 minutes": 1.0,
+            "1-2 hours": 2.0,
+            "2-3 hours": 3.0,
+            "3-4 hours": 4.0,
+            "More than 4 hours": 5.0,
         }
         travel_map = {
-            "0-30 mins": 0.0, "30-60 mins": 1.0, "1-1.5 hrs": 2.0,
-            "1.5-2 hrs": 3.0, "2-2.5 hrs": 4.0, "2.5-3 hrs": 5.0, "3+ hrs": 6.0,
+            "0-30 mins": 0.0,
+            "30-60 mins": 1.0,
+            "1-1.5 hrs": 2.0,
+            "1.5-2 hrs": 3.0,
+            "2-2.5 hrs": 4.0,
+            "2.5-3 hrs": 5.0,
+            "3+ hrs": 6.0,
         }
         stress_map = {"Bad": 0.0, "Awful": 1.0, "Good": 2.0, "Fabulous": 3.0}
 
@@ -336,7 +352,9 @@ def batch_upload_page(model_info: dict[str, Any]) -> None:
         fig.update_layout(height=320, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
     with c2:
-        fig = px.histogram(results, x="predicted_junior_readiness", nbins=20, title="Readiness distribution")
+        fig = px.histogram(
+            results, x="predicted_junior_readiness", nbins=20, title="Readiness distribution"
+        )
         fig.update_layout(height=320, xaxis_title="Readiness (%)", showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -363,7 +381,9 @@ def analytics_page(model_info: dict[str, Any]) -> None:
         [
             {
                 "Dataset": s["name"],
-                "Rows used": s.get("rows_used", model_info.get("dataset_counts", {}).get(s["name"], 0)),
+                "Rows used": s.get(
+                    "rows_used", model_info.get("dataset_counts", {}).get(s["name"], 0)
+                ),
                 "Target type": s["target_type"],
                 "Target description": s["target_description"],
             }
@@ -470,7 +490,9 @@ def main() -> None:
     model_info = initialize_components()
 
     st.sidebar.title("Navigation")
-    page = st.sidebar.selectbox("Choose a page:", ["Prediction", "Batch Upload", "Analytics", "About"])
+    page = st.sidebar.selectbox(
+        "Choose a page:", ["Prediction", "Batch Upload", "Analytics", "About"]
+    )
 
     if page == "Prediction":
         prediction_page(model_info)

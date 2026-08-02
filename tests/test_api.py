@@ -1,0 +1,52 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi.testclient import TestClient
+
+
+def test_health_reports_loaded_model(api_client: TestClient) -> None:
+    response = api_client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "model_loaded": True}
+
+
+def test_predict_returns_readiness(api_client: TestClient, valid_profile: dict[str, float]) -> None:
+    response = api_client.post("/predict", json=valid_profile)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert 0 <= payload["readiness_score"] <= 100
+    assert payload["best_domain"] in {"Web Dev", "Data", "DevOps", "Mobile"}
+
+
+def test_predict_rejects_empty_and_invalid_payloads(api_client: TestClient) -> None:
+    assert api_client.post("/predict", json={}).status_code == 422
+    response = api_client.post(
+        "/predict",
+        json={"tenth_mark": 101, "twelfth_mark": 70, "college_mark": 80},
+    )
+    assert response.status_code == 422
+
+
+def test_batch_predict_returns_one_result_per_student(
+    api_client: TestClient,
+    valid_profile: dict[str, float],
+) -> None:
+    response = api_client.post("/batch_predict", json={"students": [valid_profile, valid_profile]})
+
+    assert response.status_code == 200
+    assert len(response.json()) == 2
+
+
+def test_batch_size_limit(api_client: TestClient, valid_profile: dict[str, float]) -> None:
+    allowed: dict[str, list[dict[str, Any]]] = {"students": [valid_profile] * 100}
+    too_large: dict[str, list[dict[str, Any]]] = {"students": [valid_profile] * 101}
+
+    assert api_client.post("/batch_predict", json=allowed).status_code == 200
+    assert api_client.post("/batch_predict", json=too_large).status_code == 422
+
+
+def test_batch_rejects_empty_payload(api_client: TestClient) -> None:
+    assert api_client.post("/batch_predict", json={"students": []}).status_code == 422

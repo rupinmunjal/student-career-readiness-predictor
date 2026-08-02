@@ -217,17 +217,19 @@ Identifies specific areas needing improvement for target role.
 ### Test Coverage
 ```bash
 # Run all tests
-uv run python -m unittest discover tests -v
+uv run pytest
 
 # Run specific test
-uv run python -m unittest tests.test_predictor
+uv run pytest tests/test_api.py
 
-# Validate data pipeline
-uv run python tests/validate_pipeline.py
+# Static analysis and formatting
+uv run ruff check .
+uv run mypy src/ api.py app.py
+uv run pre-commit run --all-files
 ```
 
 ### Test Results
-- ✅ 4 unit tests covering core functionality
+- ✅ Pytest coverage for the API, data pipeline, feature engineering, and model persistence
 - ✅ Edge case validation
 - ✅ Batch prediction testing
 - ✅ Pipeline integrity checks
