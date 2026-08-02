@@ -4,13 +4,15 @@ from typing import Any
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 
-from src import StudentCareerWillingnessPredictor, MODEL_FEATURES
+from src import MODEL_FEATURES
 from src.data_pipeline import DATASET_SOURCES, DEFAULT_FEATURE_VALUES, DOMAIN_COLUMNS
 
 
 ROLES = ["Web Dev", "Data", "DevOps", "Mobile"]
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 
 def _render_radar_chart(domain_scores: dict[str, float]) -> go.Figure:
@@ -71,26 +73,20 @@ def _readiness_label(score: float) -> tuple[str, str]:
 
 
 @st.cache_resource
-def initialize_components() -> StudentCareerWillingnessPredictor:
-    predictor = StudentCareerWillingnessPredictor()
-    model_path = "models/student_career_willingness_model.pkl"
-    if os.path.exists(model_path):
-        try:
-            predictor.load_model(model_path)
-        except Exception as e:
-            st.sidebar.warning(f"Could not load pre-trained model: {e}")
-            predictor.train("data/Student Attitude and Behavior.csv")
-            predictor.save_model(model_path)
-    else:
-        predictor.train("data/Student Attitude and Behavior.csv")
-        predictor.save_model(model_path)
-    return predictor
+def initialize_components() -> dict[str, Any]:
+    try:
+        response = requests.get(f"{API_BASE_URL}/model_info", timeout=10)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as exc:
+        st.sidebar.warning(f"Could not connect to prediction API: {exc}")
+        return {}
 
 
-def prediction_page(predictor: StudentCareerWillingnessPredictor) -> None:
+def prediction_page(model_info: dict[str, Any]) -> None:
     st.header("Career Readiness Prediction")
 
-    if predictor.model is None:
+    if not model_info:
         st.error("No trained model available.")
         return
 
@@ -170,7 +166,13 @@ def prediction_page(predictor: StudentCareerWillingnessPredictor) -> None:
         if st.button("Predict Career Readiness", type="primary"):
             with st.spinner("Analyzing profile..."):
                 try:
-                    profile = predictor.predict_profile(input_data)
+                    response = requests.post(
+                        f"{API_BASE_URL}/predict",
+                        json=input_data,
+                        timeout=15,
+                    )
+                    response.raise_for_status()
+                    profile = response.json()
                 except Exception as e:
                     st.error(f"Prediction failed: {e}")
                     return
@@ -194,7 +196,13 @@ def prediction_page(predictor: StudentCareerWillingnessPredictor) -> None:
 
             st.subheader("Skill Gap Analysis")
             target = st.selectbox("Target role", ROLES, index=ROLES.index(profile["best_domain"]))
-            gap = predictor.skill_gap_analysis(input_data, target_role=target)
+            gap_response = requests.post(
+                f"{API_BASE_URL}/skill_gap",
+                json={"student_profile": input_data, "target_role": target},
+                timeout=15,
+            )
+            gap_response.raise_for_status()
+            gap = gap_response.json()
             g1, g2 = st.columns(2)
             with g1:
                 st.markdown(f"**Met** ({len(gap['met'])})")
@@ -211,8 +219,8 @@ def prediction_page(predictor: StudentCareerWillingnessPredictor) -> None:
                 else:
                     st.caption("None — fully aligned")
 
-            importance = predictor.get_feature_importance()
-            if importance is not None:
+            importance = pd.DataFrame(model_info.get("feature_importance", []))
+            if not importance.empty:
                 st.subheader("Top 5 Feature Importances")
                 fig = px.bar(
                     importance.head(5),
@@ -228,7 +236,7 @@ def prediction_page(predictor: StudentCareerWillingnessPredictor) -> None:
             st.dataframe(pd.DataFrame([input_data]).T, use_container_width=True)
 
 
-def batch_upload_page(predictor: StudentCareerWillingnessPredictor) -> None:
+def batch_upload_page(model_info: dict[str, Any]) -> None:
     st.header("Batch Upload")
     st.markdown(
         "Upload a CSV of student profiles to predict career readiness for many students at once. "
@@ -236,7 +244,7 @@ def batch_upload_page(predictor: StudentCareerWillingnessPredictor) -> None:
         f"`{', '.join(MODEL_FEATURES)}`."
     )
 
-    if predictor.model is None:
+    if not model_info:
         st.error("No trained model available.")
         return
 
@@ -264,7 +272,25 @@ def batch_upload_page(predictor: StudentCareerWillingnessPredictor) -> None:
 
     with st.spinner("Running predictions..."):
         try:
-            results = predictor.predict_batch(df)
+            response = requests.post(
+                f"{API_BASE_URL}/batch_predict",
+                json={"students": df.to_dict(orient="records")},
+                timeout=30,
+            )
+            response.raise_for_status()
+            predictions = response.json()
+            results = df.reset_index(drop=True).copy()
+            results["predicted_junior_readiness"] = [
+                item["readiness_score"] for item in predictions
+            ]
+            results["confidence_low"] = [item["confidence_interval"][0] for item in predictions]
+            results["confidence_high"] = [item["confidence_interval"][1] for item in predictions]
+            results["readiness_level"] = [item["readiness_level"] for item in predictions]
+            results["best_domain"] = [item["best_domain"] for item in predictions]
+            for domain_column, domain_label in zip(DOMAIN_COLUMNS, ROLES, strict=True):
+                results[domain_column] = [
+                    item["domain_scores"][domain_label] for item in predictions
+                ]
         except Exception as e:
             st.error(f"Batch prediction failed: {e}")
             return
@@ -329,7 +355,7 @@ def batch_upload_page(predictor: StudentCareerWillingnessPredictor) -> None:
         st.dataframe(breakdown, use_container_width=True)
 
 
-def analytics_page(predictor: StudentCareerWillingnessPredictor) -> None:
+def analytics_page(model_info: dict[str, Any]) -> None:
     st.header("Analytics Dashboard")
 
     st.subheader("Training data sources")
@@ -337,7 +363,7 @@ def analytics_page(predictor: StudentCareerWillingnessPredictor) -> None:
         [
             {
                 "Dataset": s["name"],
-                "Rows used": s.get("rows_used", predictor.dataset_counts.get(s["name"], 0)),
+                "Rows used": s.get("rows_used", model_info.get("dataset_counts", {}).get(s["name"], 0)),
                 "Target type": s["target_type"],
                 "Target description": s["target_description"],
             }
@@ -347,16 +373,18 @@ def analytics_page(predictor: StudentCareerWillingnessPredictor) -> None:
     st.dataframe(sources, use_container_width=True)
 
     st.subheader("Dataset contribution")
-    if predictor.dataset_counts:
+    dataset_counts = model_info.get("dataset_counts", {})
+    if dataset_counts:
         dc = pd.DataFrame(
-            {"Dataset": list(predictor.dataset_counts.keys()), "Rows": list(predictor.dataset_counts.values())}
+            {"Dataset": list(dataset_counts.keys()), "Rows": list(dataset_counts.values())}
         )
         fig = px.bar(dc, x="Dataset", y="Rows", title="Rows per dataset")
         fig.update_layout(height=320, showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Model cross-validation scores")
-    if predictor.cv_results:
+    cv_results = model_info.get("cv_results", {})
+    if cv_results:
         cv = pd.DataFrame(
             [
                 {
@@ -365,14 +393,17 @@ def analytics_page(predictor: StudentCareerWillingnessPredictor) -> None:
                     "CV std": f"{m['cv_std']:.2f}",
                     "Test MAE": f"{m['test_mae']:.2f}",
                 }
-                for name, m in predictor.cv_results.items()
+                for name, m in cv_results.items()
             ]
         ).sort_values("CV MAE")
         st.dataframe(cv, use_container_width=True)
-        st.caption(f"Selected model: **{predictor.model_name}** (residual std = {predictor.residual_std:.2f})")
+        st.caption(
+            f"Selected model: **{model_info.get('model_name')}** "
+            f"(residual std = {model_info.get('residual_std', 0.0):.2f})"
+        )
 
-    importance = predictor.get_feature_importance()
-    if importance is not None:
+    importance = pd.DataFrame(model_info.get("feature_importance", []))
+    if not importance.empty:
         st.subheader("Global feature importance (selected model)")
         fig = px.bar(
             importance.head(10),
@@ -436,17 +467,17 @@ def main() -> None:
     st.title("🎓 Student Career Readiness Predictor")
     st.markdown("---")
 
-    predictor = initialize_components()
+    model_info = initialize_components()
 
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox("Choose a page:", ["Prediction", "Batch Upload", "Analytics", "About"])
 
     if page == "Prediction":
-        prediction_page(predictor)
+        prediction_page(model_info)
     elif page == "Batch Upload":
-        batch_upload_page(predictor)
+        batch_upload_page(model_info)
     elif page == "Analytics":
-        analytics_page(predictor)
+        analytics_page(model_info)
     else:
         about_page()
 

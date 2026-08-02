@@ -2,9 +2,23 @@ services:
   app:
     build: .
     environment:
+      API_BASE_URL: http://api:8000
       ENV: development
     ports:
       - "8501:8501"
+    volumes:
+      - ./data:/app/data:ro
+      - ./models:/app/models:ro
+    depends_on:
+      - api
+
+  api:
+    build: .
+    entrypoint: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      ENV: development
+    ports:
+      - "8000:8000"
     volumes:
       - ./data:/app/data:ro
       - ./models:/app/models:ro

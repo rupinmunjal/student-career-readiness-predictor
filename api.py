@@ -11,6 +11,7 @@ from src.schemas import (
     BatchPredictionRequest,
     HealthResponse,
     HistoryRecord,
+    ModelInfoResponse,
     PredictionResponse,
     SkillGapRequest,
     SkillGapResponse,
@@ -90,3 +91,17 @@ def skill_gap(request: SkillGapRequest) -> SkillGapResponse:
 def history(limit: int = Query(default=50, ge=1, le=100)) -> list[HistoryRecord]:
     del limit
     return []
+
+
+@app.get("/model_info", response_model=ModelInfoResponse)
+def model_info() -> ModelInfoResponse:
+    _require_model()
+    importance = predictor.get_feature_importance()
+    records = [] if importance is None else importance.to_dict(orient="records")
+    return ModelInfoResponse(
+        model_name=predictor.model_name,
+        residual_std=predictor.residual_std,
+        cv_results=predictor.cv_results,
+        dataset_counts=predictor.dataset_counts,
+        feature_importance=records,
+    )

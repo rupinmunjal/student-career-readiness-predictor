@@ -66,3 +66,11 @@ class MetricsResponse(BaseModel):
     total_predictions: int
     total_batch_requests: int
     average_response_time_ms: float
+
+
+class ModelInfoResponse(BaseModel):
+    model_name: str | None
+    residual_std: float
+    cv_results: dict[str, dict[str, float]]
+    dataset_counts: dict[str, int]
+    feature_importance: list[dict[str, float | str]]
