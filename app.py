@@ -1,18 +1,18 @@
 import os
 import time
-from typing import Any, cast
+from typing import Any
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import requests
 import streamlit as st
 
 from src import MODEL_FEATURES
+from src.api_client import PredictionApiClient
 from src.data_pipeline import DATASET_SOURCES, DOMAIN_COLUMNS
 
 ROLES = ["Web Dev", "Data", "DevOps", "Mobile"]
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+API_BASE_URL = os.getenv("API_BASE_URL")
 
 
 def _warn_slow_response(elapsed_seconds: float) -> None:
@@ -78,14 +78,18 @@ def _readiness_label(score: float) -> tuple[str, str]:
 
 
 @st.cache_resource
+def get_api_client() -> PredictionApiClient:
+    return PredictionApiClient(API_BASE_URL)
+
+
+@st.cache_resource
 def initialize_components() -> dict[str, Any]:
     try:
         started = time.perf_counter()
-        response = requests.get(f"{API_BASE_URL}/model_info", timeout=10)
+        model_info = get_api_client().get_object("/model_info", timeout=10)
         _warn_slow_response(time.perf_counter() - started)
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
-    except requests.RequestException as exc:
+        return model_info
+    except Exception as exc:
         st.sidebar.warning(f"Could not connect to prediction API: {exc}")
         return {}
 
@@ -191,14 +195,12 @@ def prediction_page(model_info: dict[str, Any]) -> None:
             with st.spinner("Analyzing profile..."):
                 try:
                     started = time.perf_counter()
-                    response = requests.post(
-                        f"{API_BASE_URL}/predict",
-                        json=input_data,
+                    profile = get_api_client().post_object(
+                        "/predict",
+                        input_data,
                         timeout=15,
                     )
                     _warn_slow_response(time.perf_counter() - started)
-                    response.raise_for_status()
-                    profile = response.json()
                 except Exception as e:
                     st.error(f"Prediction failed: {e}")
                     return
@@ -223,14 +225,12 @@ def prediction_page(model_info: dict[str, Any]) -> None:
             st.subheader("Skill Gap Analysis")
             target = st.selectbox("Target role", ROLES, index=ROLES.index(profile["best_domain"]))
             started = time.perf_counter()
-            gap_response = requests.post(
-                f"{API_BASE_URL}/skill_gap",
-                json={"student_profile": input_data, "target_role": target},
+            gap = get_api_client().post_object(
+                "/skill_gap",
+                {"student_profile": input_data, "target_role": target},
                 timeout=15,
             )
             _warn_slow_response(time.perf_counter() - started)
-            gap_response.raise_for_status()
-            gap = gap_response.json()
             g1, g2 = st.columns(2)
             with g1:
                 st.markdown(f"**Met** ({len(gap['met'])})")
@@ -301,14 +301,12 @@ def batch_upload_page(model_info: dict[str, Any]) -> None:
     with st.spinner("Running predictions..."):
         try:
             started = time.perf_counter()
-            response = requests.post(
-                f"{API_BASE_URL}/batch_predict",
-                json={"students": df.to_dict(orient="records")},
+            predictions = get_api_client().post_list(
+                "/batch_predict",
+                {"students": df.to_dict(orient="records")},
                 timeout=30,
             )
             _warn_slow_response(time.perf_counter() - started)
-            response.raise_for_status()
-            predictions = response.json()
             results = df.reset_index(drop=True).copy()
             results["predicted_junior_readiness"] = [
                 item["readiness_score"] for item in predictions
