@@ -74,22 +74,30 @@ TRAVEL_TIME_MAP = {
 
 STRESS_LEVEL_MAP = {"bad": 0.0, "awful": 1.0, "good": 2.0, "fabulous": 3.0}
 
-DATASET_SOURCES: list[dict[str, str]] = [
+DATASET_SOURCES: list[dict[str, Any]] = [
     {
         "name": "Student Attitude and Behavior",
         "local_file": "Student Attitude and Behavior.csv",
         "source": "https://www.kaggle.com/datasets/sahilislam007/student-attitude-and-behavior",
-        "notes": "Primary dataset with self-reported career willingness (%). Contains academic performance, study habits, and stress metrics.",
+        "notes": (
+            "Primary dataset with self-reported career willingness (%). Contains academic "
+            "performance, study habits, and stress metrics."
+        ),
         "target_type": "self-reported",
         "rows_used": 235,
-        "target_description": "Student self-assessment of willingness to pursue career based on degree (0-100%)",
+        "target_description": (
+            "Student self-assessment of willingness to pursue career based on degree (0-100%)"
+        ),
         "limitations": "Self-reported data may not correlate perfectly with actual job readiness",
     },
     {
         "name": "Campus Placement Records",
         "local_file": "Placement_Data_Full_Class.csv",
         "source": "https://www.kaggle.com/datasets/benroshan/factors-affecting-campus-placement",
-        "notes": "MBA student placement data with REAL outcomes. Contains academic scores, work experience, and actual placement results.",
+        "notes": (
+            "MBA student placement data with REAL outcomes. Contains academic scores, work "
+            "experience, and actual placement results."
+        ),
         "target_type": "real_outcome",
         "rows_used": 215,
         "target_description": "Actual placement status (Placed/Not Placed) with salary data",
@@ -98,11 +106,13 @@ DATASET_SOURCES: list[dict[str, str]] = [
     },
 ]
 
+
 @dataclass
 class PipelineResult:
     data: pd.DataFrame
     dataset_counts: dict[str, int]
     used_files: list[str]
+
 
 def _to_yes_no_flag(value: Any) -> float:
     if pd.isna(value):
@@ -114,6 +124,7 @@ def _to_yes_no_flag(value: Any) -> float:
         return 0.0
     return np.nan
 
+
 def _to_float(value: Any) -> float:
     if pd.isna(value):
         return np.nan
@@ -123,21 +134,25 @@ def _to_float(value: Any) -> float:
     except ValueError:
         return np.nan
 
+
 def _normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [str(col).strip() for col in df.columns]
     return df
+
 
 def _col(df: pd.DataFrame, name: str) -> pd.Series:
     if name in df.columns:
         return df[name]
     return pd.Series([np.nan] * len(df), dtype=float)
 
+
 def _safe_fill_defaults(df: pd.DataFrame, default_dict: dict[str, float]) -> pd.DataFrame:
     for col, default in default_dict.items():
         if col in df.columns and df[col].isna().any():
             df[col] = df[col].fillna(default)
     return df
+
 
 def _add_relevance_scores(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -159,6 +174,7 @@ def _add_relevance_scores(df: pd.DataFrame) -> pd.DataFrame:
         - df["stress_level"].fillna(2.0) * 5.0
     )
     return df
+
 
 def _add_domain_scores(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -184,6 +200,7 @@ def _add_domain_scores(df: pd.DataFrame) -> pd.DataFrame:
     )
     return df
 
+
 def _normalize_for_model(df: pd.DataFrame, source: str) -> pd.DataFrame:
     df = df.copy()
     df["source_dataset"] = source
@@ -191,6 +208,7 @@ def _normalize_for_model(df: pd.DataFrame, source: str) -> pd.DataFrame:
     df = _add_relevance_scores(df)
     df = _add_domain_scores(df)
     return df
+
 
 def load_primary_dataset(path: Path) -> pd.DataFrame:
     df = _normalize_column_names(pd.read_csv(path))
@@ -214,10 +232,16 @@ def load_primary_dataset(path: Path) -> pd.DataFrame:
     out["tenth_mark"] = _col(df, "10th Mark").map(_to_float)
     out["twelfth_mark"] = _col(df, "12th Mark").map(_to_float)
     out["college_mark"] = _col(df, "college mark").map(_to_float)
-    out["daily_studying_time"] = _col(df, "daily studing time").astype(str).str.strip().str.lower().map(STUDY_TIME_MAP)
+    out["daily_studying_time"] = (
+        _col(df, "daily studing time").astype(str).str.strip().str.lower().map(STUDY_TIME_MAP)
+    )
     out["likes_degree"] = _col(df, "Do you like your degree?").map(_to_yes_no_flag)
-    out["travel_time"] = _col(df, "Travelling Time ").astype(str).str.strip().str.lower().map(TRAVEL_TIME_MAP)
-    out["stress_level"] = _col(df, "Stress Level ").astype(str).str.strip().str.lower().map(STRESS_LEVEL_MAP)
+    out["travel_time"] = (
+        _col(df, "Travelling Time ").astype(str).str.strip().str.lower().map(TRAVEL_TIME_MAP)
+    )
+    out["stress_level"] = (
+        _col(df, "Stress Level ").astype(str).str.strip().str.lower().map(STRESS_LEVEL_MAP)
+    )
     out["part_time_job"] = _col(df, "part-time job").map(_to_yes_no_flag)
 
     # Proxies for junior-level profile from existing data
@@ -244,10 +268,11 @@ def load_primary_dataset(path: Path) -> pd.DataFrame:
         1,
         8,
     )
-    out[TARGET_COLUMN] = (
-        _col(df, "willingness to pursue a career based on their degree").map(_to_float)
+    out[TARGET_COLUMN] = _col(df, "willingness to pursue a career based on their degree").map(
+        _to_float
     )
     return _normalize_for_model(out, "Student Attitude and Behavior")
+
 
 def load_campus_placement_dataset(path: Path) -> pd.DataFrame:
     df = _normalize_column_names(pd.read_csv(path))
@@ -276,6 +301,7 @@ def load_campus_placement_dataset(path: Path) -> pd.DataFrame:
     out[TARGET_COLUMN] = np.where(status.eq("placed"), 85.0, 40.0)
     return _normalize_for_model(out, "Campus Placement Records")
 
+
 def prepare_training_dataset(
     base_dataset_path: str = "data/Student Attitude and Behavior.csv",
     data_dir: str = "data",
@@ -301,48 +327,47 @@ def prepare_training_dataset(
         used_files.append(str(placement_path))
 
     merged = pd.concat(datasets, ignore_index=True)
-    
+
     if TARGET_COLUMN not in merged.columns:
         raise ValueError(f"Target column '{TARGET_COLUMN}' missing from all datasets")
-    
+
     initial_count = len(merged)
     merged = merged.dropna(subset=[TARGET_COLUMN])
     dropped_count = initial_count - len(merged)
     if dropped_count > 0:
         print(f"Note: Dropped {dropped_count} rows with missing target values")
-    
+
     merged = merged.fillna({col: DEFAULT_FEATURE_VALUES.get(col, 0.0) for col in MODEL_FEATURES})
-    
+
     if len(merged) == 0:
         raise ValueError("No valid training data after preprocessing")
-    
+
     merged = merged.reset_index(drop=True)
 
-    return PipelineResult(
-        data=merged,
-        dataset_counts=dataset_counts,
-        used_files=used_files
-    )
+    return PipelineResult(data=merged, dataset_counts=dataset_counts, used_files=used_files)
+
 
 def normalize_input_frame(df: pd.DataFrame) -> pd.DataFrame:
     if len(df) == 0:
         return pd.DataFrame(columns=MODEL_FEATURES + DOMAIN_COLUMNS)
-    
+
     frame = df.copy()
     for col in MODEL_FEATURES:
         if col not in frame.columns:
             frame[col] = DEFAULT_FEATURE_VALUES.get(col, 0.0)
-    
+
     frame = _safe_fill_defaults(frame, DEFAULT_FEATURE_VALUES)
     frame = _add_relevance_scores(frame)
     frame = _add_domain_scores(frame)
-    
+
     return frame
+
 
 def run_pipeline_and_save(output_path: str = "data/merged_student_career_data.csv") -> None:
     result = prepare_training_dataset()
     result.data.to_csv(output_path, index=False)
     print(f"✅ Saved merged dataset to {output_path}")
+
 
 if __name__ == "__main__":
     run_pipeline_and_save()
