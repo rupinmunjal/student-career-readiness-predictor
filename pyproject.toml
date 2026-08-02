@@ -1,7 +1,7 @@
 [project]
-name = "student-career-app"
+name = "student-career-readiness-predictor"
 version = "1.0.0"
-description = "Predicts a student's willingness to pursue a career using ML models based on attitude and behavior."
+description = "Predicts junior developer career readiness using machine learning."
 readme = "README.md"
 requires-python = ">=3.9,<3.12"
 
