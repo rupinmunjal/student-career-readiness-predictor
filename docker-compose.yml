@@ -16,9 +16,30 @@ services:
     build: .
     entrypoint: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
     environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/student_career
       ENV: development
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data:ro
       - ./models:/app/models:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: student_career
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d student_career"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

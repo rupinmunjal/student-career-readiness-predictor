@@ -3,10 +3,14 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.database import PredictionRecord, StudentProfile, get_db, init_db
 from src.schemas import (
     BatchPredictionRequest,
     HealthResponse,
@@ -39,6 +43,7 @@ def load_predictor() -> bool:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     load_predictor()
+    await init_db()
     yield
 
 
@@ -60,9 +65,49 @@ def health() -> HealthResponse:
 
 
 @app.post("/predict", response_model=PredictionResponse)
-def predict(student: StudentProfileRequest) -> PredictionResponse:
+async def predict(
+    student: StudentProfileRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PredictionResponse:
     _require_model()
     result = predictor.predict_profile(student.model_dump())
+    values = student.model_dump()
+    student_record = StudentProfile(
+        academic_scores_json={
+            "tenth_mark": values["tenth_mark"],
+            "twelfth_mark": values["twelfth_mark"],
+            "college_mark": values["college_mark"],
+        },
+        engagement_metrics_json={
+            key: values[key]
+            for key in (
+                "certification_course",
+                "daily_studying_time",
+                "likes_degree",
+                "travel_time",
+                "stress_level",
+                "part_time_job",
+            )
+        },
+        github_activity=values["github_activity_proxy"],
+        projects_count=int(values["side_projects_count"]),
+        internships_count=int(values["internship_experience"]),
+        tech_skills_json={
+            "self_rating": values["tech_skills_self_rating"],
+            "languages_known_count": values["languages_known_count"],
+        },
+    )
+    db.add(student_record)
+    await db.flush()
+    prediction_record = PredictionRecord(
+        student_id=student_record.id,
+        readiness_score=result["readiness_score"],
+        domain_fit_json=result["domain_scores"],
+        shap_features_json={},
+        model_version=predictor.model_name or "unknown",
+    )
+    db.add(prediction_record)
+    await db.commit()
     return PredictionResponse.model_validate(result)
 
 
@@ -88,9 +133,32 @@ def skill_gap(request: SkillGapRequest) -> SkillGapResponse:
 
 
 @app.get("/history", response_model=list[HistoryRecord])
-def history(limit: int = Query(default=50, ge=1, le=100)) -> list[HistoryRecord]:
-    del limit
-    return []
+async def history(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(default=50, ge=1, le=100),
+) -> list[HistoryRecord]:
+    query = select(PredictionRecord).order_by(PredictionRecord.created_at.desc()).limit(limit)
+    records = (await db.scalars(query)).all()
+    history_records: list[HistoryRecord] = []
+    for record in records:
+        level = (
+            "High"
+            if record.readiness_score >= 70
+            else "Moderate"
+            if record.readiness_score >= 40
+            else "Low"
+        )
+        best_domain = max(record.domain_fit_json, key=record.domain_fit_json.get)
+        history_records.append(
+            HistoryRecord(
+                id=record.id,
+                readiness_score=record.readiness_score,
+                readiness_level=level,
+                best_domain=best_domain,
+                created_at=record.created_at.isoformat(),
+            )
+        )
+    return history_records
 
 
 @app.get("/model_info", response_model=ModelInfoResponse)
