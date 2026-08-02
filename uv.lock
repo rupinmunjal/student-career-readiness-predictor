@@ -3793,7 +3793,7 @@ wheels = [
 ]
 
 [[package]]
-name = "student-career-app"
+name = "student-career-readiness-predictor"
 version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
