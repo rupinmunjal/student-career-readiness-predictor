@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from src.data_pipeline import (
+    CANONICAL_FEATURES,
     DOMAIN_COLUMNS,
     MODEL_FEATURES,
     TARGET_COLUMN,
@@ -48,3 +50,28 @@ def test_unexpected_columns_are_ignored(tmp_path: Path) -> None:
 
     assert "unexpected_external_field" not in normalized.columns
     assert set(MODEL_FEATURES).issubset(normalized.columns)
+
+
+def test_synthetic_data_is_loaded_only_when_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    primary = pd.read_csv("data/Student Attitude and Behavior.csv")
+    placement = pd.read_csv("data/Placement_Data_Full_Class.csv")
+    primary_path = tmp_path / "Student Attitude and Behavior.csv"
+    primary.to_csv(primary_path, index=False)
+    placement.to_csv(tmp_path / "Placement_Data_Full_Class.csv", index=False)
+    synthetic_dir = tmp_path / "synthetic"
+    synthetic_dir.mkdir()
+    profile = dict.fromkeys(CANONICAL_FEATURES, 1.0)
+    pd.DataFrame([{"student_id": "synthetic-1", **profile}]).to_csv(
+        synthetic_dir / "synthetic_students.csv", index=False
+    )
+    pd.DataFrame([{"student_id": "synthetic-1", TARGET_COLUMN: 75.0}]).to_csv(
+        synthetic_dir / "synthetic_outcomes.csv", index=False
+    )
+    monkeypatch.setenv("USE_SYNTHETIC", "1")
+
+    result = prepare_training_dataset(str(primary_path), str(tmp_path))
+
+    assert len(result.data) == 451
+    assert result.dataset_counts["Synthetic Student Profiles"] == 1

@@ -202,26 +202,23 @@ Identifies specific areas needing improvement for target role.
 
 ## 📊 Data Sources
 
-### Honest Quality Data (450 Records)
+The default training set contains exactly 450 public records:
 
-| Dataset | Records | Target Type | New Signal |
-|---------|---------|-------------|------------|
-| **Student Attitude and Behavior** | 235 | Self-reported willingness | Baseline academic & engagement |
-| **Campus Placement Records** | 215 | REAL placement outcomes | Professional experience, test scores |
+| Dataset | Records | Origin | Target |
+|---|---:|---|---|
+| Student Attitude and Behavior | 235 | [Kaggle, sahilislam007](https://www.kaggle.com/datasets/sahilislam007/student-attitude-and-behavior) | Self-reported career willingness |
+| Factors Affecting Campus Placement | 215 | [Kaggle, Ben Roshan](https://www.kaggle.com/datasets/benroshan/factors-affecting-campus-placement) | Actual placed/not-placed outcome |
 
-### Previously Rejected Datasets
+Known limitations are material. The sample is small, the 235-row survey target is self-reported,
+and neither source documents broad geographic or demographic coverage. The placement records are
+MBA students, so their outcomes are only a proxy for junior software-career readiness. Several
+developer-profile fields, including GitHub activity, are engineered proxies rather than measured
+GitHub events. Scores should support counseling, not automated hiring decisions.
 
-❌ **Maths Performance** - No career target
-❌ **Portuguese Performance** - No career target  
-❌ **Job Placement (old)** - Fabricated targets
-❌ **Students Performance** - No career outcomes
-
-### Quality Principles
-
-✅ **Real Outcomes**: Only datasets with genuine career-related targets
-✅ **Honest Alignment**: Features must have true semantic equivalence
-✅ **No Fabrication**: No invented targets or synthetic padding
-✅ **Transparent Provenance**: Clear documentation of each dataset's contribution
+Optional synthetic profiles are generated from the observed means and standard deviations and
+are never loaded by default. Run `uv run python scripts/generate_synthetic_profiles.py`, then set
+`USE_SYNTHETIC=1` to include them for load testing or experimentation. Generated CSVs are ignored
+by Git and must not be presented as real outcomes.
 
 ## 🧪 Testing
 
