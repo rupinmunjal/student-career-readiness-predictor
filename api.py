@@ -1,20 +1,31 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import json
+import logging
+import os
+import time
+from collections import deque
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from threading import Lock
+from typing import Annotated, Any
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.base import RequestResponseEndpoint
+from starlette.requests import Request
+from starlette.responses import Response
 
 from src.database import PredictionRecord, StudentProfile, get_db, init_db
 from src.schemas import (
     BatchPredictionRequest,
     HealthResponse,
     HistoryRecord,
+    MetricsResponse,
     ModelInfoResponse,
     PredictionResponse,
     SkillGapRequest,
@@ -27,6 +38,59 @@ MODEL_PATH = Path("models/student_career_willingness_model.pkl")
 
 predictor = StudentCareerWillingnessPredictor()
 model_loaded = False
+response_times_ms: deque[float] = deque(maxlen=100)
+total_predictions = 0
+total_batch_requests = 0
+metrics_lock = Lock()
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "level": record.levelname,
+            "message": record.getMessage(),
+        }
+        for key in (
+            "method",
+            "endpoint",
+            "status_code",
+            "response_time_ms",
+            "input_feature_count",
+            "readiness_range",
+            "warnings",
+        ):
+            if hasattr(record, key):
+                payload[key] = getattr(record, key)
+        return json.dumps(payload)
+
+
+class ColorFormatter(logging.Formatter):
+    COLORS = {"INFO": "\033[36m", "WARNING": "\033[33m", "ERROR": "\033[31m"}
+
+    def format(self, record: logging.LogRecord) -> str:
+        color = self.COLORS.get(record.levelname, "")
+        reset = "\033[0m" if color else ""
+        return f"{color}{super().format(record)}{reset}"
+
+
+def configure_logging() -> logging.Logger:
+    configured_logger = logging.getLogger("student_career_api")
+    configured_logger.setLevel(logging.INFO)
+    configured_logger.handlers.clear()
+    handler = logging.StreamHandler()
+    if os.getenv("ENV", "development") == "production":
+        handler.setFormatter(JsonFormatter())
+    else:
+        handler.setFormatter(
+            ColorFormatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+        )
+    configured_logger.addHandler(handler)
+    configured_logger.propagate = False
+    return configured_logger
+
+
+logger = configure_logging()
 
 
 def load_predictor() -> bool:
@@ -54,9 +118,59 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def log_request(
+    request: Request,
+    call_next: RequestResponseEndpoint,
+) -> Response:
+    started = time.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        response_times_ms.append(elapsed_ms)
+        logger.info(
+            "request_completed",
+            extra={
+                "method": request.method,
+                "endpoint": request.url.path,
+                "status_code": status_code,
+                "response_time_ms": round(elapsed_ms, 2),
+            },
+        )
+
+
 def _require_model() -> None:
     if not model_loaded:
         raise HTTPException(status_code=503, detail="Prediction model is not loaded")
+
+
+def _readiness_range(score: float) -> str:
+    if score >= 70:
+        return "high"
+    if score >= 40:
+        return "moderate"
+    return "low"
+
+
+def _log_prediction(
+    student: StudentProfileRequest,
+    result: Mapping[str, Any],
+) -> None:
+    warnings = []
+    if "github_activity_proxy" not in student.model_fields_set:
+        warnings.append("missing_github_activity")
+    logger.info(
+        "prediction_completed",
+        extra={
+            "input_feature_count": len(student.model_fields_set),
+            "readiness_range": _readiness_range(float(result["readiness_score"])),
+            "warnings": warnings,
+        },
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -108,6 +222,10 @@ async def predict(
     )
     db.add(prediction_record)
     await db.commit()
+    global total_predictions
+    with metrics_lock:
+        total_predictions += 1
+    _log_prediction(student, result)
     return PredictionResponse.model_validate(result)
 
 
@@ -115,10 +233,16 @@ async def predict(
 def batch_predict(request: BatchPredictionRequest) -> list[PredictionResponse]:
     _require_model()
     frame = pd.DataFrame([student.model_dump() for student in request.students])
-    return [
-        PredictionResponse.model_validate(predictor.predict_profile(row.to_dict()))
-        for _, row in frame.iterrows()
-    ]
+    responses: list[PredictionResponse] = []
+    for student, (_, row) in zip(request.students, frame.iterrows(), strict=True):
+        result = predictor.predict_profile(row.to_dict())
+        _log_prediction(student, result)
+        responses.append(PredictionResponse.model_validate(result))
+    global total_batch_requests, total_predictions
+    with metrics_lock:
+        total_batch_requests += 1
+        total_predictions += len(responses)
+    return responses
 
 
 @app.post("/skill_gap", response_model=SkillGapResponse)
@@ -174,4 +298,17 @@ def model_info() -> ModelInfoResponse:
         cv_results=predictor.cv_results,
         dataset_counts=predictor.dataset_counts,
         feature_importance=records,
+    )
+
+
+@app.get("/metrics", response_model=MetricsResponse)
+def metrics() -> MetricsResponse:
+    average = sum(response_times_ms) / len(response_times_ms) if response_times_ms else 0.0
+    with metrics_lock:
+        predictions = total_predictions
+        batches = total_batch_requests
+    return MetricsResponse(
+        total_predictions=predictions,
+        total_batch_requests=batches,
+        average_response_time_ms=round(average, 2),
     )

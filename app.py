@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any, cast
 
 import pandas as pd
@@ -12,6 +13,11 @@ from src.data_pipeline import DATASET_SOURCES, DOMAIN_COLUMNS
 
 ROLES = ["Web Dev", "Data", "DevOps", "Mobile"]
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+
+
+def _warn_slow_response(elapsed_seconds: float) -> None:
+    if elapsed_seconds > 2:
+        st.sidebar.warning(f"Prediction API response took {elapsed_seconds:.1f} seconds.")
 
 
 def _render_radar_chart(domain_scores: dict[str, float]) -> go.Figure:
@@ -74,7 +80,9 @@ def _readiness_label(score: float) -> tuple[str, str]:
 @st.cache_resource
 def initialize_components() -> dict[str, Any]:
     try:
+        started = time.perf_counter()
         response = requests.get(f"{API_BASE_URL}/model_info", timeout=10)
+        _warn_slow_response(time.perf_counter() - started)
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
     except requests.RequestException as exc:
@@ -182,11 +190,13 @@ def prediction_page(model_info: dict[str, Any]) -> None:
         if st.button("Predict Career Readiness", type="primary"):
             with st.spinner("Analyzing profile..."):
                 try:
+                    started = time.perf_counter()
                     response = requests.post(
                         f"{API_BASE_URL}/predict",
                         json=input_data,
                         timeout=15,
                     )
+                    _warn_slow_response(time.perf_counter() - started)
                     response.raise_for_status()
                     profile = response.json()
                 except Exception as e:
@@ -212,11 +222,13 @@ def prediction_page(model_info: dict[str, Any]) -> None:
 
             st.subheader("Skill Gap Analysis")
             target = st.selectbox("Target role", ROLES, index=ROLES.index(profile["best_domain"]))
+            started = time.perf_counter()
             gap_response = requests.post(
                 f"{API_BASE_URL}/skill_gap",
                 json={"student_profile": input_data, "target_role": target},
                 timeout=15,
             )
+            _warn_slow_response(time.perf_counter() - started)
             gap_response.raise_for_status()
             gap = gap_response.json()
             g1, g2 = st.columns(2)
@@ -288,11 +300,13 @@ def batch_upload_page(model_info: dict[str, Any]) -> None:
 
     with st.spinner("Running predictions..."):
         try:
+            started = time.perf_counter()
             response = requests.post(
                 f"{API_BASE_URL}/batch_predict",
                 json={"students": df.to_dict(orient="records")},
                 timeout=30,
             )
+            _warn_slow_response(time.perf_counter() - started)
             response.raise_for_status()
             predictions = response.json()
             results = df.reset_index(drop=True).copy()

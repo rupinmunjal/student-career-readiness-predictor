@@ -116,6 +116,8 @@ The Streamlit interface is available at [http://localhost:8501](http://localhost
 The FastAPI service exposes health, prediction, batch prediction, skill-gap, and prediction
 history endpoints. Interactive API documentation is available at
 [http://localhost:8000/docs](http://localhost:8000/docs) when the API service is running.
+Operational counters and the rolling average response time are available from `GET /metrics`.
+Set `ENV=production` to emit structured JSON request and prediction logs.
 
 Local development stores prediction history in `student_career.db`. Set `DATABASE_URL` to an
 async SQLAlchemy PostgreSQL URL for a shared database. Schema changes are managed with Alembic:
