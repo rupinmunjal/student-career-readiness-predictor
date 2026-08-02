@@ -1,11 +1,11 @@
-from .student_career_willingness_predictor import StudentCareerWillingnessPredictor
 from .data_pipeline import (
-    prepare_training_dataset,
     DATASET_SOURCES,
-    MODEL_FEATURES,
     DOMAIN_COLUMNS,
+    MODEL_FEATURES,
     TARGET_COLUMN,
+    prepare_training_dataset,
 )
+from .student_career_willingness_predictor import StudentCareerWillingnessPredictor
 
 __all__ = [
     "StudentCareerWillingnessPredictor",
