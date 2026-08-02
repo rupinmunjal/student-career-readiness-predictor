@@ -106,6 +106,13 @@ uv add package_name  # Automatically updates pyproject.toml and uv.lock
 
 ## 🚀 Running the Application
 
+### Containerized development
+```bash
+docker compose up --build
+```
+
+The Streamlit interface is available at [http://localhost:8501](http://localhost:8501).
+
 ### Start the app
 ```bash
 uv run streamlit run app.py
