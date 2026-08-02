@@ -5,6 +5,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error
@@ -91,25 +92,31 @@ class StudentCareerWillingnessPredictor:
 
         return models
 
-    def train(self, file_path: str = "data/Student Attitude and Behavior.csv", data_dir: str = "data") -> Any:
+    def train(
+        self, file_path: str = "data/Student Attitude and Behavior.csv", data_dir: str = "data"
+    ) -> Any:
         pipeline = prepare_training_dataset(base_dataset_path=file_path, data_dir=data_dir)
         df = pipeline.data
 
         self.dataset_counts = pipeline.dataset_counts
         self.used_files = pipeline.used_files
-        X = df[MODEL_FEATURES].copy()
+        features = df[MODEL_FEATURES].copy()
         y = df[TARGET_COLUMN].astype(float).values
         self.feature_columns = MODEL_FEATURES.copy()
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X,
+        features_train, features_test, y_train, y_test = train_test_split(
+            features,
             y,
             test_size=0.25,
             random_state=42,
         )
-        self.scaler.fit(X_train)
-        X_train_scaled = pd.DataFrame(self.scaler.transform(X_train), columns=self.feature_columns)
-        X_test_scaled = pd.DataFrame(self.scaler.transform(X_test), columns=self.feature_columns)
+        self.scaler.fit(features_train)
+        features_train_scaled = pd.DataFrame(
+            self.scaler.transform(features_train), columns=self.feature_columns
+        )
+        features_test_scaled = pd.DataFrame(
+            self.scaler.transform(features_test), columns=self.feature_columns
+        )
 
         best_model = None
         best_name = None
@@ -117,8 +124,8 @@ class StudentCareerWillingnessPredictor:
         best_mae = float("inf")
 
         for model_name, (model, mode) in self._build_candidate_models().items():
-            train_matrix = X_train_scaled if mode == "scaled" else X_train
-            test_matrix = X_test_scaled if mode == "scaled" else X_test
+            train_matrix = features_train_scaled if mode == "scaled" else features_train
+            test_matrix = features_test_scaled if mode == "scaled" else features_test
 
             model.fit(train_matrix, y_train)
             pred = model.predict(test_matrix)
@@ -148,28 +155,34 @@ class StudentCareerWillingnessPredictor:
         self.model_name = best_name
         self.model_type = best_mode or "raw"
 
-        self.training_reference = X_train.head(min(120, len(X_train))).reset_index(drop=True)
+        self.training_reference = features_train.head(min(120, len(features_train))).reset_index(
+            drop=True
+        )
         if self.model_type == "scaled":
             self.training_reference = pd.DataFrame(
                 self.scaler.transform(self.training_reference), columns=self.feature_columns
             )
 
-        final_train_matrix = X_train_scaled if self.model_type == "scaled" else X_train
-        train_pred = self.model.predict(final_train_matrix)
+        final_train_matrix = (
+            features_train_scaled if self.model_type == "scaled" else features_train
+        )
+        selected_model = self._ensure_model()
+        train_pred = selected_model.predict(final_train_matrix)
         residuals = y_train - train_pred
         self.residual_std = float(max(np.std(residuals), 5.0))
         return self.model
 
-    def _ensure_model(self) -> None:
+    def _ensure_model(self) -> Any:
         if self.model is None:
             raise ValueError("Model not trained yet.")
+        return self.model
 
-    def _predict_raw_score(self, prepared_df: pd.DataFrame) -> np.ndarray:
-        self._ensure_model()
+    def _predict_raw_score(self, prepared_df: pd.DataFrame) -> NDArray[np.float64]:
+        model = self._ensure_model()
         matrix = prepared_df[self.feature_columns]
         if self.model_type == "scaled":
             matrix = pd.DataFrame(self.scaler.transform(matrix), columns=self.feature_columns)
-        pred = np.asarray(self.model.predict(matrix), dtype=float)
+        pred = np.asarray(model.predict(matrix), dtype=np.float64)
         return np.clip(pred, 0.0, 100.0)
 
     def predict(self, input_data: dict[str, Any] | pd.DataFrame) -> float:
@@ -186,10 +199,7 @@ class StudentCareerWillingnessPredictor:
         return {k: float(np.clip(v, 0.0, 100.0)) for k, v in scores.items()}
 
     def predict_profile(self, input_data: dict[str, Any] | pd.DataFrame) -> dict[str, Any]:
-        if isinstance(input_data, dict):
-            frame = pd.DataFrame([input_data])
-        else:
-            frame = input_data.copy()
+        frame = pd.DataFrame([input_data]) if isinstance(input_data, dict) else input_data.copy()
 
         prepared = normalize_input_frame(frame)
         readiness = float(self._predict_raw_score(prepared)[0])
@@ -198,7 +208,7 @@ class StudentCareerWillingnessPredictor:
         confidence_high = float(np.clip(readiness + ci_margin, 0.0, 100.0))
 
         domain_scores = self._domain_scores_from_row(prepared.iloc[0])
-        best_domain = max(domain_scores, key=domain_scores.get)
+        best_domain = max(domain_scores, key=lambda name: domain_scores[name])
         readiness_level = "High" if readiness >= 70 else "Moderate" if readiness >= 40 else "Low"
 
         return {
@@ -217,8 +227,12 @@ class StudentCareerWillingnessPredictor:
         ci_margin = 1.96 * self.residual_std
         result = input_data.copy()
         result["predicted_junior_readiness"] = np.clip(readiness_scores, 0.0, 100.0)
-        result["confidence_low"] = np.clip(result["predicted_junior_readiness"] - ci_margin, 0.0, 100.0)
-        result["confidence_high"] = np.clip(result["predicted_junior_readiness"] + ci_margin, 0.0, 100.0)
+        result["confidence_low"] = np.clip(
+            result["predicted_junior_readiness"] - ci_margin, 0.0, 100.0
+        )
+        result["confidence_high"] = np.clip(
+            result["predicted_junior_readiness"] + ci_margin, 0.0, 100.0
+        )
         result["readiness_level"] = pd.cut(
             result["predicted_junior_readiness"],
             bins=[-0.01, 40, 70, 100],
@@ -241,12 +255,12 @@ class StudentCareerWillingnessPredictor:
         return result
 
     def get_feature_importance(self) -> pd.DataFrame | None:
-        self._ensure_model()
+        model = self._ensure_model()
 
-        if hasattr(self.model, "feature_importances_"):
-            values = np.asarray(self.model.feature_importances_, dtype=float)
-        elif hasattr(self.model, "coef_"):
-            values = np.abs(np.asarray(self.model.coef_, dtype=float).flatten())
+        if hasattr(model, "feature_importances_"):
+            values = np.asarray(model.feature_importances_, dtype=np.float64)
+        elif hasattr(model, "coef_"):
+            values = np.abs(np.asarray(model.coef_, dtype=np.float64).flatten())
         else:
             return None
 
@@ -254,7 +268,9 @@ class StudentCareerWillingnessPredictor:
             "importance", ascending=False
         )
 
-    def get_shap_feature_importance(self, input_frame: pd.DataFrame | None = None) -> pd.DataFrame | None:
+    def get_shap_feature_importance(
+        self, input_frame: pd.DataFrame | None = None
+    ) -> pd.DataFrame | None:
         self._ensure_model()
         if self.training_reference is None:
             return None
@@ -290,11 +306,10 @@ class StudentCareerWillingnessPredictor:
             "importance", ascending=False
         )
 
-    def skill_gap_analysis(self, input_data: dict[str, Any] | pd.DataFrame, target_role: str) -> dict[str, Any]:
-        if isinstance(input_data, dict):
-            frame = pd.DataFrame([input_data])
-        else:
-            frame = input_data.copy()
+    def skill_gap_analysis(
+        self, input_data: dict[str, Any] | pd.DataFrame, target_role: str
+    ) -> dict[str, Any]:
+        frame = pd.DataFrame([input_data]) if isinstance(input_data, dict) else input_data.copy()
         prepared = normalize_input_frame(frame).iloc[0]
 
         role_thresholds: dict[str, dict[str, float]] = {

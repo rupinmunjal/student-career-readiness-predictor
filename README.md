@@ -221,6 +221,11 @@ uv run pytest
 
 # Run specific test
 uv run pytest tests/test_api.py
+
+# Static analysis and formatting
+uv run ruff check .
+uv run mypy src/ api.py app.py
+uv run pre-commit run --all-files
 ```
 
 ### Test Results
