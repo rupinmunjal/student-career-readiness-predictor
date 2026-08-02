@@ -24,4 +24,5 @@ dependencies = [
     "alembic>=1.16.5",
     "asyncpg>=0.31.0",
     "requests>=2.32.5",
+    "aiosqlite>=0.22.1",
 ]
