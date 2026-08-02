@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -24,7 +26,7 @@ from .data_pipeline import (
 
 
 class StudentCareerWillingnessPredictor:
-    def __init__(self) -> None:
+    def __init__(self, load_on_init: bool = True) -> None:
         self.model: Any | None = None
         self.scaler = StandardScaler()
         self.feature_columns: list[str] = MODEL_FEATURES.copy()
@@ -35,6 +37,31 @@ class StudentCareerWillingnessPredictor:
         self.training_reference: pd.DataFrame | None = None
         self.dataset_counts: dict[str, int] = {}
         self.used_files: list[str] = []
+        if load_on_init:
+            self._load_configured_model()
+
+    def _load_configured_model(self) -> None:
+        tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+        if tracking_uri:
+            try:
+                self._load_from_mlflow(tracking_uri)
+                return
+            except Exception:
+                pass
+        local_path = Path("models/student_career_willingness_model.pkl")
+        if local_path.exists():
+            self.load_model(str(local_path))
+
+    def _load_from_mlflow(self, tracking_uri: str) -> None:
+        import mlflow
+        from mlflow import MlflowClient
+
+        mlflow.set_tracking_uri(tracking_uri)
+        version = MlflowClient().get_model_version_by_alias("student-readiness-model", "latest")
+        bundle_path = mlflow.artifacts.download_artifacts(
+            artifact_uri=f"runs:/{version.run_id}/predictor_bundle.pkl"
+        )
+        self.load_model(bundle_path)
 
     def _build_candidate_models(self) -> dict[str, tuple[Any, str]]:
         models: dict[str, tuple[Any, str]] = {

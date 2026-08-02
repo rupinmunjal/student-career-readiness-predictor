@@ -24,6 +24,7 @@ Thumbs.db
 *.log
 *.db
 alembic/versions/*.pyc
+mlruns/
 
 # Test output
 .coverage
