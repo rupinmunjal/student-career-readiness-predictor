@@ -1,6 +1,12 @@
 .venv
 __pycache__
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.playwright-cli
+graphify-out
 .git
 tests
 *.db
 mlruns
+data/synthetic
