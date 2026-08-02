@@ -117,6 +117,13 @@ The FastAPI service exposes health, prediction, batch prediction, skill-gap, and
 history endpoints. Interactive API documentation is available at
 [http://localhost:8000/docs](http://localhost:8000/docs) when the API service is running.
 
+Local development stores prediction history in `student_career.db`. Set `DATABASE_URL` to an
+async SQLAlchemy PostgreSQL URL for a shared database. Schema changes are managed with Alembic:
+
+```bash
+uv run alembic upgrade head
+```
+
 ### Start the app
 ```bash
 uv run streamlit run app.py
