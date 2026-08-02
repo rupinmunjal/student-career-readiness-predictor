@@ -23,6 +23,10 @@ docker compose up --build
 The frontend waits for the API service, and the API waits for PostgreSQL to pass its health
 check. The `data/` and `models/` directories are mounted read-only in application containers.
 
+When `API_BASE_URL` is not set, Streamlit runs the same FastAPI application in-process. This
+keeps single-service hosts such as Streamlit Community Cloud functional without changing the
+UI or duplicating prediction logic. Set `API_BASE_URL` to use a separately hosted API.
+
 ## Architecture
 
 ```mermaid
@@ -133,6 +137,12 @@ Install the locked environment and run services without Docker:
 uv sync
 uv run uvicorn api:app --host 0.0.0.0 --port 8000
 API_BASE_URL=http://localhost:8000 uv run streamlit run app.py --server.port 8501
+```
+
+For a single-process local run that mirrors Streamlit Community Cloud:
+
+```bash
+uv run streamlit run app.py --server.port 8501
 ```
 
 Database migrations and synthetic-data generation:
