@@ -116,6 +116,8 @@ The Streamlit interface is available at [http://localhost:8501](http://localhost
 The FastAPI service exposes health, prediction, batch prediction, skill-gap, and prediction
 history endpoints. Interactive API documentation is available at
 [http://localhost:8000/docs](http://localhost:8000/docs) when the API service is running.
+Operational counters and the rolling average response time are available from `GET /metrics`.
+Set `ENV=production` to emit structured JSON request and prediction logs.
 
 Local development stores prediction history in `student_career.db`. Set `DATABASE_URL` to an
 async SQLAlchemy PostgreSQL URL for a shared database. Schema changes are managed with Alembic:
@@ -128,6 +130,15 @@ uv run alembic upgrade head
 ```bash
 uv run streamlit run app.py
 ```
+
+### Track model training with MLflow
+```bash
+uv run mlflow server --host 127.0.0.1 --port 5000
+MLFLOW_TRACKING_URI=http://127.0.0.1:5000 uv run python -m src.training
+```
+
+Each candidate model logs validation metrics, model artifacts, feature importance, and a SHAP
+summary. The best cross-validated model is registered as `student-readiness-model`.
 
 ### Access the app
 Open [http://localhost:8501](http://localhost:8501) in your browser.
