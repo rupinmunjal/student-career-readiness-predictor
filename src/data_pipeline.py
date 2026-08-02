@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -302,6 +303,21 @@ def load_campus_placement_dataset(path: Path) -> pd.DataFrame:
     return _normalize_for_model(out, "Campus Placement Records")
 
 
+def load_synthetic_dataset(data_dir: Path) -> pd.DataFrame:
+    profiles_path = data_dir / "synthetic" / "synthetic_students.csv"
+    outcomes_path = data_dir / "synthetic" / "synthetic_outcomes.csv"
+    if not profiles_path.exists() or not outcomes_path.exists():
+        raise FileNotFoundError(
+            "Synthetic data is enabled but generated files are missing. Run "
+            "`uv run python scripts/generate_synthetic_profiles.py`."
+        )
+    profiles = pd.read_csv(profiles_path)
+    outcomes = pd.read_csv(outcomes_path)
+    merged = profiles.merge(outcomes, on="student_id", validate="one_to_one")
+    aligned = merged[CANONICAL_FEATURES + [TARGET_COLUMN]].copy()
+    return _normalize_for_model(aligned, "Synthetic Student Profiles")
+
+
 def prepare_training_dataset(
     base_dataset_path: str = "data/Student Attitude and Behavior.csv",
     data_dir: str = "data",
@@ -325,6 +341,17 @@ def prepare_training_dataset(
         datasets.append(placement)
         dataset_counts["Campus Placement Records"] = len(placement)
         used_files.append(str(placement_path))
+
+    if os.getenv("USE_SYNTHETIC") == "1":
+        synthetic = load_synthetic_dataset(Path(data_dir))
+        datasets.append(synthetic)
+        dataset_counts["Synthetic Student Profiles"] = len(synthetic)
+        used_files.extend(
+            [
+                str(Path(data_dir) / "synthetic" / "synthetic_students.csv"),
+                str(Path(data_dir) / "synthetic" / "synthetic_outcomes.csv"),
+            ]
+        )
 
     merged = pd.concat(datasets, ignore_index=True)
 
