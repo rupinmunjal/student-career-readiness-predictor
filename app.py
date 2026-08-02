@@ -502,9 +502,7 @@ def main() -> None:
     model_info = initialize_components()
 
     st.sidebar.title("Navigation")
-    page = st.sidebar.selectbox(
-        "Choose a page:", ["Prediction", "Batch Upload", "Analytics", "About"]
-    )
+    page = st.sidebar.radio("Choose a page:", ["Prediction", "Batch Upload", "Analytics", "About"])
 
     if page == "Prediction":
         prediction_page(model_info)

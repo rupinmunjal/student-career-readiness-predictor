@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -173,20 +173,9 @@ def _log_prediction(
     )
 
 
-@app.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
-    return HealthResponse(status="ok", model_loaded=model_loaded)
-
-
-@app.post("/predict", response_model=PredictionResponse)
-async def predict(
-    student: StudentProfileRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> PredictionResponse:
-    _require_model()
-    result = predictor.predict_profile(student.model_dump())
+def _student_profile_record(student: StudentProfileRequest) -> StudentProfile:
     values = student.model_dump()
-    student_record = StudentProfile(
+    return StudentProfile(
         academic_scores_json={
             "tenth_mark": values["tenth_mark"],
             "twelfth_mark": values["twelfth_mark"],
@@ -211,16 +200,37 @@ async def predict(
             "languages_known_count": values["languages_known_count"],
         },
     )
-    db.add(student_record)
-    await db.flush()
-    prediction_record = PredictionRecord(
-        student_id=student_record.id,
+
+
+def _prediction_record(
+    student_id: int,
+    result: Mapping[str, Any],
+) -> PredictionRecord:
+    return PredictionRecord(
+        student_id=student_id,
         readiness_score=result["readiness_score"],
         domain_fit_json=result["domain_scores"],
         shap_features_json={},
         model_version=predictor.model_name or "unknown",
     )
-    db.add(prediction_record)
+
+
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(status="ok", model_loaded=model_loaded)
+
+
+@app.post("/predict", response_model=PredictionResponse)
+async def predict(
+    student: StudentProfileRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> PredictionResponse:
+    _require_model()
+    result = predictor.predict_profile(student.model_dump())
+    student_record = _student_profile_record(student)
+    db.add(student_record)
+    await db.flush()
+    db.add(_prediction_record(student_record.id, result))
     await db.commit()
     global total_predictions
     with metrics_lock:
@@ -230,14 +240,22 @@ async def predict(
 
 
 @app.post("/batch_predict", response_model=list[PredictionResponse])
-def batch_predict(request: BatchPredictionRequest) -> list[PredictionResponse]:
+async def batch_predict(
+    request: BatchPredictionRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[PredictionResponse]:
     _require_model()
     frame = pd.DataFrame([student.model_dump() for student in request.students])
     responses: list[PredictionResponse] = []
     for student, (_, row) in zip(request.students, frame.iterrows(), strict=True):
-        result = predictor.predict_profile(row.to_dict())
+        result = predictor.predict_profile(cast(dict[str, Any], row.to_dict()))
+        student_record = _student_profile_record(student)
+        db.add(student_record)
+        await db.flush()
+        db.add(_prediction_record(student_record.id, result))
         _log_prediction(student, result)
         responses.append(PredictionResponse.model_validate(result))
+    await db.commit()
     global total_batch_requests, total_predictions
     with metrics_lock:
         total_batch_requests += 1
@@ -291,7 +309,11 @@ async def history(
 def model_info() -> ModelInfoResponse:
     _require_model()
     importance = predictor.get_feature_importance()
-    records = [] if importance is None else importance.to_dict(orient="records")
+    records = (
+        []
+        if importance is None
+        else cast(list[dict[str, float | str]], importance.to_dict(orient="records"))
+    )
     return ModelInfoResponse(
         model_name=predictor.model_name,
         residual_std=predictor.residual_std,

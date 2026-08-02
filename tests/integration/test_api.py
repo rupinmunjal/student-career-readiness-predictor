@@ -34,10 +34,24 @@ def test_batch_predict_returns_one_result_per_student(
     api_client: TestClient,
     valid_profile: dict[str, float],
 ) -> None:
+    history_before = api_client.get("/history?limit=100")
+    metrics_before = api_client.get("/metrics")
     response = api_client.post("/batch_predict", json={"students": [valid_profile, valid_profile]})
+    history_after = api_client.get("/history?limit=100")
+    metrics_after = api_client.get("/metrics")
 
     assert response.status_code == 200
     assert len(response.json()) == 2
+    previous_ids = {record["id"] for record in history_before.json()}
+    current_ids = {record["id"] for record in history_after.json()}
+    assert len(current_ids - previous_ids) == 2
+    assert (
+        metrics_after.json()["total_predictions"] == metrics_before.json()["total_predictions"] + 2
+    )
+    assert (
+        metrics_after.json()["total_batch_requests"]
+        == metrics_before.json()["total_batch_requests"] + 1
+    )
 
 
 def test_batch_size_limit(api_client: TestClient, valid_profile: dict[str, float]) -> None:

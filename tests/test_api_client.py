@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.api_client import PredictionApiClient
 
 
@@ -19,3 +21,14 @@ def test_embedded_client_supports_batch_predictions(valid_profile: dict[str, flo
 
     assert len(predictions) == 1
     assert predictions[0]["readiness_level"] in {"Low", "Moderate", "High"}
+
+
+def test_embedded_client_close_is_idempotent() -> None:
+    client = PredictionApiClient(base_url=None)
+
+    assert client.__enter__() is client
+    client.__exit__(None, None, None)
+    client.close()
+
+    with pytest.raises(RuntimeError, match="already closed"):
+        client.__enter__()

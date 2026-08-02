@@ -54,6 +54,10 @@ operations run through FastAPI, while SQLAlchemy stores individual prediction hi
 
 FastAPI generates the OpenAPI interface at `/docs`. Main endpoints are:
 
+Predictions are persisted to the configured database. A single `/predict` request stores one
+student and prediction record, while `/batch_predict` stores every student and prediction in
+the batch using one transaction.
+
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Service and model readiness |

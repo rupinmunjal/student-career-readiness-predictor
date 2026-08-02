@@ -1,18 +1,19 @@
 repos:
-  - repo: local
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
     hooks:
       - id: ruff-check
-        name: ruff check
-        entry: uv run ruff check --fix
-        language: system
-        types: [python]
+        args: [--fix]
       - id: ruff-format
-        name: ruff format
-        entry: uv run ruff format
-        language: system
-        types: [python]
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
       - id: mypy
-        name: mypy
-        entry: uv run mypy
-        language: system
-        types: [python]
+        args: [src/, api.py, app.py]
+        pass_filenames: false
+        additional_dependencies:
+          - fastapi>=0.128.8
+          - pandas-stubs>=1.5.3
+          - sqlalchemy>=2.0.51
+          - streamlit>=1.28
+          - types-requests>=2.32.0

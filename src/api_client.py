@@ -24,9 +24,12 @@ class PredictionApiClient:
 
     def __init__(self, base_url: str | None) -> None:
         self._embedded_client: TestClient | None = None
+        self._external_session: requests.Session | None = None
+        self._closed = False
         if base_url:
             self._base_url = base_url.rstrip("/")
-            self._client = cast(HttpClient, requests.Session())
+            self._external_session = requests.Session()
+            self._client = cast(HttpClient, self._external_session)
         else:
             from api import app
 
@@ -37,11 +40,23 @@ class PredictionApiClient:
             self._base_url = ""
 
     def close(self) -> None:
-        if self._embedded_client is not None:
-            self._embedded_client.__exit__(None, None, None)
-            self._embedded_client = None
+        if self._closed:
+            return
+        self._closed = True
+
+        embedded_client = self._embedded_client
+        external_session = self._external_session
+        self._embedded_client = None
+        self._external_session = None
+
+        if embedded_client is not None:
+            embedded_client.__exit__(None, None, None)
+        if external_session is not None:
+            external_session.close()
 
     def __enter__(self) -> PredictionApiClient:
+        if self._closed:
+            raise RuntimeError("Prediction API client is already closed")
         return self
 
     def __exit__(
@@ -53,6 +68,7 @@ class PredictionApiClient:
         self.close()
 
     def get_object(self, path: str, *, timeout: float = 10) -> dict[str, Any]:
+        self._ensure_open()
         response = self._client.get(self._url(path), timeout=timeout)
         response.raise_for_status()
         return self._object_payload(response)
@@ -64,6 +80,7 @@ class PredictionApiClient:
         *,
         timeout: float = 15,
     ) -> dict[str, Any]:
+        self._ensure_open()
         response = self._client.post(self._url(path), json=payload, timeout=timeout)
         response.raise_for_status()
         return self._object_payload(response)
@@ -75,6 +92,7 @@ class PredictionApiClient:
         *,
         timeout: float = 30,
     ) -> list[dict[str, Any]]:
+        self._ensure_open()
         response = self._client.post(self._url(path), json=payload, timeout=timeout)
         response.raise_for_status()
         data: object = response.json()
@@ -85,6 +103,10 @@ class PredictionApiClient:
     def _url(self, path: str) -> str:
         normalized_path = path if path.startswith("/") else f"/{path}"
         return f"{self._base_url}{normalized_path}"
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("Prediction API client is closed")
 
     @staticmethod
     def _object_payload(response: HttpResponse) -> dict[str, Any]:
