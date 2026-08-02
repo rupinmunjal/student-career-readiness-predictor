@@ -10,7 +10,6 @@ ENV/
 
 # IDE
 .idea/
-.vscode/
 *.swp
 *.swo
 
@@ -44,9 +43,9 @@ data/*
 !data/Placement_Data_Full_Class.csv
 
 # Environment variables
-.env
-.env.local
 
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+config.bat
+node_modules

@@ -50,3 +50,12 @@ def test_batch_size_limit(api_client: TestClient, valid_profile: dict[str, float
 
 def test_batch_rejects_empty_payload(api_client: TestClient) -> None:
     assert api_client.post("/batch_predict", json={"students": []}).status_code == 422
+
+
+def test_metrics_reports_request_activity(api_client: TestClient) -> None:
+    api_client.get("/health")
+
+    response = api_client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.json()["average_response_time_ms"] >= 0
