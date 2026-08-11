@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ from threading import Lock
 from typing import Annotated, Any, cast
 
 import pandas as pd
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,12 +29,22 @@ from src.schemas import (
     HistoryRecord,
     MetricsResponse,
     ModelInfoResponse,
+    NarrateExplanationRequest,
+    NarrateExplanationResponse,
     PredictionResponse,
     SkillGapRequest,
     SkillGapResponse,
     StudentProfileRequest,
 )
 from src.student_career_willingness_predictor import StudentCareerWillingnessPredictor
+from src.tts import (
+    TTSGenerationError,
+    TTSNotConfiguredError,
+    build_narration_text,
+    synthesize_explanation,
+)
+
+load_dotenv()
 
 MODEL_PATH = Path("models/student_career_willingness_model.pkl")
 
@@ -206,11 +218,13 @@ def _prediction_record(
     student_id: int,
     result: Mapping[str, Any],
 ) -> PredictionRecord:
+    shap_contributions = result.get("shap_contributions") or []
+    shap_features = {item["feature"]: item["impact"] for item in shap_contributions}
     return PredictionRecord(
         student_id=student_id,
         readiness_score=result["readiness_score"],
         domain_fit_json=result["domain_scores"],
-        shap_features_json={},
+        shap_features_json=shap_features,
         model_version=predictor.model_name or "unknown",
     )
 
@@ -274,6 +288,24 @@ def skill_gap(request: SkillGapRequest) -> SkillGapResponse:
         f"Strengthen {skill} for {request.target_role}." for skill in result["missing"]
     ]
     return SkillGapResponse(**result, recommendations=recommendations)
+
+
+@app.post("/narrate-explanation", response_model=NarrateExplanationResponse)
+def narrate_explanation(request: NarrateExplanationRequest) -> NarrateExplanationResponse:
+    narration_text = build_narration_text(request)
+    try:
+        audio_path = synthesize_explanation(request, narration_text)
+    except TTSNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except TTSGenerationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    audio_base64 = base64.b64encode(audio_path.read_bytes()).decode("ascii")
+    return NarrateExplanationResponse(
+        audio_path=str(audio_path),
+        narration_text=narration_text,
+        audio_base64=audio_base64,
+    )
 
 
 @app.get("/history", response_model=list[HistoryRecord])
