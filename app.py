@@ -1,3 +1,4 @@
+import base64
 import os
 import time
 from typing import Any
@@ -13,6 +14,23 @@ from src.data_pipeline import DATASET_SOURCES, DOMAIN_COLUMNS
 
 ROLES = ["Web Dev", "Data", "DevOps", "Mobile"]
 API_BASE_URL = os.getenv("API_BASE_URL")
+
+FEATURE_LABELS = {
+    "github_activity_proxy": "GitHub activity",
+    "side_projects_count": "side projects",
+    "internship_experience": "internship experience",
+    "tech_skills_self_rating": "tech skills rating",
+    "languages_known_count": "languages known",
+    "certification_course": "certifications",
+    "college_mark": "college marks",
+    "tenth_mark": "10th grade marks",
+    "twelfth_mark": "12th grade marks",
+    "daily_studying_time": "daily study time",
+    "travel_time": "travel time",
+    "stress_level": "stress level",
+    "part_time_job": "part-time work",
+    "likes_degree": "degree interest",
+}
 
 
 def _warn_slow_response(elapsed_seconds: float) -> None:
@@ -77,6 +95,24 @@ def _readiness_label(score: float) -> tuple[str, str]:
     return "Low", "error"
 
 
+def _prettify_feature(feature: str) -> str:
+    return FEATURE_LABELS.get(feature, feature.replace("_", " "))
+
+
+def _render_shap_bar_chart(shap_contributions: list[dict[str, Any]]) -> go.Figure:
+    ordered = sorted(shap_contributions, key=lambda item: item["impact"])
+    features = [_prettify_feature(str(item["feature"])) for item in ordered]
+    impacts = [float(item["impact"]) for item in ordered]
+    colors = ["#d4453b" if value < 0 else "#2ecc71" for value in impacts]
+    fig = go.Figure(go.Bar(x=impacts, y=features, orientation="h", marker={"color": colors}))
+    fig.update_layout(
+        height=260,
+        margin={"l": 10, "r": 10, "t": 20, "b": 10},
+        xaxis_title="Impact on readiness score (points)",
+    )
+    return fig
+
+
 @st.cache_resource
 def get_api_client() -> PredictionApiClient:
     return PredictionApiClient(API_BASE_URL)
@@ -105,6 +141,8 @@ def prediction_page(model_info: dict[str, Any]) -> None:
 
     with col1:
         st.subheader("Student Information")
+
+        student_name = st.text_input("Student name", value="Student")
 
         with st.expander("Academic Performance", expanded=True):
             c1, c2, c3 = st.columns(3)
@@ -203,8 +241,15 @@ def prediction_page(model_info: dict[str, Any]) -> None:
                     _warn_slow_response(time.perf_counter() - started)
                 except Exception as e:
                     st.error(f"Prediction failed: {e}")
-                    return
+                    profile = None
 
+            if profile is not None:
+                st.session_state["prediction_profile"] = profile
+                st.session_state["prediction_input"] = input_data
+
+        profile = st.session_state.get("prediction_profile")
+
+        if profile is not None:
             score = profile["readiness_score"]
             label, kind = _readiness_label(score)
             ci_low, ci_high = profile["confidence_interval"]
@@ -221,6 +266,14 @@ def prediction_page(model_info: dict[str, Any]) -> None:
                 _render_radar_chart(profile["domain_scores"]),
                 use_container_width=True,
             )
+
+            shap_contributions = profile.get("shap_contributions")
+            if shap_contributions:
+                st.subheader("Why This Score (Your Breakdown)")
+                st.plotly_chart(
+                    _render_shap_bar_chart(shap_contributions),
+                    use_container_width=True,
+                )
 
             st.subheader("Skill Gap Analysis")
             target = st.selectbox("Target role", ROLES, index=ROLES.index(profile["best_domain"]))
@@ -259,6 +312,57 @@ def prediction_page(model_info: dict[str, Any]) -> None:
                 )
                 fig.update_layout(height=280, yaxis={"categoryorder": "total ascending"})
                 st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader("🔊 Narrated Explanation")
+            if st.button("🔊 Listen to Explanation"):
+                with st.spinner("Generating narration..."):
+                    try:
+                        if shap_contributions and score:
+                            top_features = [
+                                {
+                                    "feature": _prettify_feature(str(item["feature"])),
+                                    "impact": round(float(item["impact"]) / score * 100, 1),
+                                }
+                                for item in shap_contributions[:3]
+                            ]
+                        else:
+                            total_importance = (
+                                float(importance["importance"].sum())
+                                if not importance.empty
+                                else 0.0
+                            )
+                            top_features = [
+                                {
+                                    "feature": _prettify_feature(str(row["feature"])),
+                                    "impact": (
+                                        round(float(row["importance"]) / total_importance * 100, 1)
+                                        if total_importance > 0
+                                        else 0.0
+                                    ),
+                                }
+                                for _, row in importance.head(3).iterrows()
+                            ]
+                        improvement_tip = (
+                            f"Work on your {gap['missing'][0]}"
+                            if gap["missing"]
+                            else "Keep up the strong momentum across the board"
+                        )
+                        narration = get_api_client().post_object(
+                            "/narrate-explanation",
+                            {
+                                "student_name": student_name or "Student",
+                                "readiness_score": round(score / 10, 1),
+                                "top_features": top_features,
+                                "recommended_track": profile["best_domain"],
+                                "improvement_tip": improvement_tip,
+                            },
+                            timeout=30,
+                        )
+                    except Exception as exc:
+                        st.error(f"Couldn't generate narration right now: {exc}")
+                    else:
+                        st.caption(narration["narration_text"])
+                        st.audio(base64.b64decode(narration["audio_base64"]), format="audio/mp3")
 
         with st.expander("Input summary"):
             st.dataframe(pd.DataFrame([input_data]).T, use_container_width=True)
