@@ -4,7 +4,7 @@ End-to-end ML platform predicting junior developer job readiness with FastAPI, S
 
 ## Tech Stack
 
-Python 3.11 | FastAPI | Streamlit | Docker | SQLAlchemy | MLflow | pytest | Ruff | SHAP | XGBoost
+Python 3.11 | FastAPI | Streamlit | Docker | SQLAlchemy | MLflow | pytest | Ruff | SHAP | XGBoost | ElevenLabs
 
 ## Quick Start
 
@@ -27,6 +27,10 @@ When `API_BASE_URL` is not set, Streamlit runs the same FastAPI application in-p
 keeps single-service hosts such as Streamlit Community Cloud functional without changing the
 UI or duplicating prediction logic. Set `API_BASE_URL` to use a separately hosted API.
 
+Copy `.env.example` to `.env` and set `ELEVENLABS_API_KEY` to enable spoken explanations (see
+[Text-to-Speech Narration](#text-to-speech-narration-elevenlabs)). The rest of the app works
+normally without it.
+
 ## Architecture
 
 ```mermaid
@@ -47,6 +51,8 @@ operations run through FastAPI, while SQLAlchemy stores individual prediction hi
 - Single-student readiness score, confidence interval, and Web Dev, Data, DevOps, or Mobile fit
 - Batch prediction for up to 100 profiles per API request with CSV download in Streamlit
 - Role-specific skill-gap recommendations and global feature importance
+- Per-student SHAP breakdown showing which features pushed the score up or down
+- Spoken explanation of a prediction via ElevenLabs text-to-speech ("Listen to Explanation")
 - Six candidate regressors with MLflow metrics, artifacts, SHAP summaries, and model registry
 - SQLite local persistence, PostgreSQL container persistence, structured logs, and API metrics
 
@@ -61,9 +67,10 @@ the batch using one transaction.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Service and model readiness |
-| POST | `/predict` | Persist and return one prediction |
+| POST | `/predict` | Persist and return one prediction (includes per-student SHAP contributions) |
 | POST | `/batch_predict` | Return predictions for 1 to 100 students |
 | POST | `/skill_gap` | Compare a profile with a target role |
+| POST | `/narrate-explanation` | Generate a spoken explanation with ElevenLabs |
 | GET | `/history?limit=50` | Return recent persisted predictions |
 | GET | `/metrics` | Return request latency and prediction counters |
 
@@ -95,6 +102,52 @@ curl -X POST http://localhost:8000/batch_predict \
     ]
   }'
 ```
+
+## Text-to-Speech Narration (ElevenLabs)
+
+The Streamlit prediction page has a "Listen to Explanation" button that turns a student's
+readiness score, top SHAP contributions, recommended track, and a skill-gap tip into a short
+spoken narration using the ElevenLabs API (`eleven_flash_v2_5`, voice `JBFqnCBsd6RMkjVDRZzb`).
+
+Setup:
+
+- **Docker Compose / local dev**: set `ELEVENLABS_API_KEY` in `.env` (see `.env.example`).
+  `docker-compose.yml` forwards it to the `api` service automatically.
+- **Streamlit Community Cloud**: add it as a root-level secret in the app's
+  **Settings → Secrets**:
+
+  ```toml
+  ELEVENLABS_API_KEY = "sk_your_real_key_here"
+  ```
+
+  Root-level secrets are exposed as environment variables automatically, and
+  `/narrate-explanation` runs in-process on Streamlit Cloud (see the `API_BASE_URL` note above),
+  so no code changes are needed.
+
+If the key is missing, invalid, or the ElevenLabs API call fails, `/narrate-explanation` returns
+a `503`/`502` and the UI shows a friendly error — the rest of the app keeps working. Generated
+audio is written to `/tmp` and also returned base64-encoded in the response so the frontend can
+play it with `st.audio()` even when the API runs in a separate container/host.
+
+Call it directly:
+
+```bash
+curl -X POST http://localhost:8000/narrate-explanation \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "student_name": "Alex",
+    "readiness_score": 7.2,
+    "top_features": [
+      {"feature": "backend projects", "impact": 18},
+      {"feature": "internship months", "impact": 12}
+    ],
+    "recommended_track": "DevOps",
+    "improvement_tip": "Add an AWS certification"
+  }'
+```
+
+Free ElevenLabs tier: 10,000 credits/month. `eleven_flash_v2_5` costs 0.5 credits/char, so a
+~300 character explanation costs ~150 credits (roughly 65 narrations/month on the free tier).
 
 ## Model Info
 
@@ -167,6 +220,9 @@ MLFLOW_TRACKING_URI=http://127.0.0.1:5000 uv run python -m src.training
 Set `ENV=production` for JSON logs. Development mode uses colored console logs. Local database
 storage defaults to `sqlite:///./student_career.db`; Docker Compose uses PostgreSQL 15 through
 `postgresql+asyncpg://postgres:postgres@db:5432/student_career`.
+
+`api.py` loads `.env` automatically via `python-dotenv`, so a local `ELEVENLABS_API_KEY` in
+`.env` is picked up whether you run the API directly or through Streamlit's embedded mode.
 
 ## Testing
 
