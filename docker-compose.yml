@@ -18,11 +18,14 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/student_career
       ENV: development
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data:ro
       - ./models:/app/models:ro
+    tmpfs:
+      - /tmp
     depends_on:
       db:
         condition: service_healthy

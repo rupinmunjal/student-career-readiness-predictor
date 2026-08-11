@@ -245,6 +245,7 @@ class StudentCareerWillingnessPredictor:
             "best_domain": best_domain,
             "domain_scores": domain_scores,
             "feature_values": prepared.iloc[0][self.feature_columns].to_dict(),
+            "shap_contributions": self.get_shap_contributions(prepared),
         }
 
     def predict_batch(self, input_data: pd.DataFrame) -> pd.DataFrame:
@@ -332,6 +333,48 @@ class StudentCareerWillingnessPredictor:
         return pd.DataFrame({"feature": self.feature_columns, "importance": values}).sort_values(
             "importance", ascending=False
         )
+
+    def get_shap_contributions(
+        self, prepared_frame: pd.DataFrame, top_n: int = 5
+    ) -> list[dict[str, float | str]] | None:
+        """Signed, per-instance SHAP contributions for a single prepared profile row.
+
+        Unlike `get_shap_feature_importance` (mean absolute importance across rows),
+        this preserves the sign so callers can tell whether a feature pushed the
+        prediction up or down for this specific student.
+        """
+        self._ensure_model()
+        if self.training_reference is None:
+            return None
+
+        try:
+            import shap
+        except Exception:
+            return None
+
+        model_type_name = type(self.model).__name__
+        if model_type_name in ["SVR", "LinearRegression"]:
+            return None
+
+        if not set(self.feature_columns).issubset(prepared_frame.columns):
+            return None
+        matrix = prepared_frame[self.feature_columns].iloc[[0]]
+        if self.model_type == "scaled":
+            matrix = pd.DataFrame(self.scaler.transform(matrix), columns=self.feature_columns)
+
+        try:
+            explainer = shap.Explainer(self.model, self.training_reference)
+            shap_values = explainer(matrix)
+            contributions = np.asarray(shap_values.values, dtype=np.float64)[0]
+        except Exception:
+            return None
+
+        ranked = sorted(
+            zip(self.feature_columns, contributions, strict=True),
+            key=lambda item: abs(item[1]),
+            reverse=True,
+        )[:top_n]
+        return [{"feature": feature, "impact": float(value)} for feature, value in ranked]
 
     def skill_gap_analysis(
         self, input_data: dict[str, Any] | pd.DataFrame, target_role: str

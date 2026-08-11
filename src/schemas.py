@@ -24,6 +24,11 @@ class StudentProfileRequest(BaseModel):
     languages_known_count: float = Field(default=2, ge=0, le=50)
 
 
+class TopFeatureImpact(BaseModel):
+    feature: str
+    impact: float
+
+
 class PredictionResponse(BaseModel):
     readiness_score: float
     readiness_level: Literal["Low", "Moderate", "High"]
@@ -31,6 +36,7 @@ class PredictionResponse(BaseModel):
     best_domain: Literal["Web Dev", "Data", "DevOps", "Mobile"]
     domain_scores: dict[str, float]
     feature_values: dict[str, float]
+    shap_contributions: list[TopFeatureImpact] | None = None
 
 
 class BatchPredictionRequest(BaseModel):
@@ -74,3 +80,19 @@ class ModelInfoResponse(BaseModel):
     cv_results: dict[str, dict[str, float]]
     dataset_counts: dict[str, int]
     feature_importance: list[dict[str, float | str]]
+
+
+class NarrateExplanationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    student_name: str = Field(min_length=1, max_length=100)
+    readiness_score: float = Field(ge=0, le=10)
+    top_features: list[TopFeatureImpact] = Field(default_factory=list, max_length=10)
+    recommended_track: Literal["Web Dev", "Data", "DevOps", "Mobile"]
+    improvement_tip: str = Field(min_length=1, max_length=280)
+
+
+class NarrateExplanationResponse(BaseModel):
+    audio_path: str
+    narration_text: str
+    audio_base64: str

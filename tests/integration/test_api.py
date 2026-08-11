@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
+
+from src import tts as tts_module
 
 
 def test_health_reports_loaded_model(api_client: TestClient) -> None:
@@ -73,3 +77,62 @@ def test_metrics_reports_request_activity(api_client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["average_response_time_ms"] >= 0
+
+
+@pytest.fixture
+def narrate_payload() -> dict[str, Any]:
+    return {
+        "student_name": "Alex",
+        "readiness_score": 7.2,
+        "top_features": [
+            {"feature": "backend projects", "impact": 18.0},
+            {"feature": "internship months", "impact": 12.0},
+        ],
+        "recommended_track": "DevOps",
+        "improvement_tip": "Add an AWS certification",
+    }
+
+
+def test_narrate_explanation_returns_503_when_not_configured(
+    api_client: TestClient,
+    narrate_payload: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+    response = api_client.post("/narrate-explanation", json=narrate_payload)
+
+    assert response.status_code == 503
+
+
+def test_narrate_explanation_rejects_invalid_payload(api_client: TestClient) -> None:
+    assert api_client.post("/narrate-explanation", json={}).status_code == 422
+
+
+def test_narrate_explanation_returns_audio_when_configured(
+    api_client: TestClient,
+    narrate_payload: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "fake-key")
+    monkeypatch.setattr(tts_module, "AUDIO_DIR", tmp_path)
+
+    class _FakeTextToSpeech:
+        def convert(self, **_: Any) -> list[bytes]:
+            return [b"fake-mp3-bytes"]
+
+    class _FakeClient:
+        text_to_speech = _FakeTextToSpeech()
+
+    monkeypatch.setattr(tts_module, "_ElevenLabsClient", lambda api_key: _FakeClient())
+
+    response = api_client.post("/narrate-explanation", json=narrate_payload)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["audio_path"] == str(tmp_path / "explanation_Alex.mp3")
+    assert "Alex" in payload["narration_text"]
+    assert "DevOps" in payload["narration_text"]
+    assert payload["audio_base64"]
+    assert (tmp_path / "explanation_Alex.mp3").read_bytes() == b"fake-mp3-bytes"
